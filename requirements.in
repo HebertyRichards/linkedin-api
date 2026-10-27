@@ -1,0 +1,12 @@
+# Direct dependencies with the accepted ranges. Edit THIS file.
+#
+# requirements.txt is the resolved lock (and what the Dockerfile installs).
+# Regenerate it after changing anything here:
+#
+#     uv pip compile requirements.in -o requirements.txt --universal --python-version 3.13
+#
+# Major versions are capped: minor/patch releases come in on the next compile, a major needs a review.
+
+httpx>=0.28,<1
+pydantic>=2.14,<3
+pydantic-settings>=2.15,<3

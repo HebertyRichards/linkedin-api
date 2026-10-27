@@ -1,0 +1,31 @@
+# Railway deploy triggered by a TAG (e.g. v0.1.0).
+# Pushing a tag is the deliberate release action: nothing goes live on a branch push.
+#
+# Repo settings (Settings -> Secrets and variables -> Actions):
+#   - Secret   RAILWAY_TOKEN   = Project Token of the PRODUCTION environment in Railway
+#   - Variable RAILWAY_SERVICE = Railway service name (e.g. linkedin-api)
+# In Railway, turn off the GitHub auto-deploy (Service -> Settings -> Deploy), or a branch push still deploys.
+name: deploy
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+
+      - name: Deploy the tagged commit
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service "${{ vars.RAILWAY_SERVICE }}" --ci

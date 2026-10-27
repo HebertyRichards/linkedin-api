@@ -1,0 +1,74 @@
+import pytest
+from pydantic import ValidationError
+
+from app.config.settings import get_settings
+from tests.helpers import WHATSAPP, make_settings
+
+
+def test_email_alone_is_enough() -> None:
+    settings = make_settings()
+    assert settings.channels == ["email"]
+    assert settings.email_from == "onboarding@resend.dev"
+
+
+def test_primary_channel_comes_first() -> None:
+    assert make_settings(**WHATSAPP).channels == ["whatsapp", "email"]
+    assert make_settings(**WHATSAPP, notify_primary="email").channels == ["email", "whatsapp"]
+
+
+def test_primary_without_its_channel_uses_the_configured_one() -> None:
+    assert make_settings(notify_primary="whatsapp").channels == ["email"]
+
+
+def test_incomplete_channel_names_what_is_missing() -> None:
+    partial = {key: value for key, value in WHATSAPP.items() if key != "evolution_instance"}
+    with pytest.raises(ValidationError, match="whatsapp channel is incomplete, missing: EVOLUTION_INSTANCE"):
+        make_settings(**partial)
+
+
+def test_no_channel_is_an_error() -> None:
+    with pytest.raises(ValidationError, match="configure at least one channel"):
+        make_settings(resend_api_key="", email_to="")
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://evolution.example.com/", "http://evolution.railway.internal:8080", "http://localhost:8080"],
+)
+def test_evolution_url_accepted(url: str) -> None:
+    assert make_settings(**{**WHATSAPP, "evolution_api_url": url}).evolution_api_url == url.rstrip("/")
+
+
+def test_evolution_url_without_tls_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="https://"):
+        make_settings(**{**WHATSAPP, "evolution_api_url": "http://evolution.example.com"})
+
+
+def test_whatsapp_number_pasted_with_formatting() -> None:
+    settings = make_settings(**{**WHATSAPP, "whatsapp_to": "+55 (11) 99999-9999"})
+    assert settings.whatsapp_to == "5511999999999"
+    assert make_settings(**{**WHATSAPP, "whatsapp_to": "120363000000000000@g.us"}).whatsapp_to.endswith("@g.us")
+
+
+def test_searches_are_trimmed_and_capped() -> None:
+    assert make_settings(job_keywords=" python , ,typescript ").searches == ["python", "typescript"]
+    with pytest.raises(ValidationError, match="1 to 3 searches"):
+        make_settings(job_keywords="a,b,c,d")
+
+
+def test_poll_interval_has_a_floor() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(poll_interval_seconds=59)
+
+
+def test_startup_error_lists_names_but_never_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JOB_KEYWORDS", "python")
+    monkeypatch.setenv("JOB_LOCATION", "Brazil")
+    monkeypatch.setenv("RESEND_API_KEY", "re_super_secret_123")
+    monkeypatch.setenv("EMAIL_TO", "not an email")
+    with pytest.raises(RuntimeError) as error:
+        get_settings()
+    message = str(error.value)
+    assert "EMAIL_TO" in message
+    assert "re_super_secret_123" not in message
+    assert "not an email" not in message

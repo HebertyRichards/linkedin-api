@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+
+venv/
+.venv/
+
+__pycache__/
+*.py[cod]
+
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+results/
+
+# Local state file when STATE_FILE points inside the repo.
+*.json.tmp
+seen.json
+
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+*.log
