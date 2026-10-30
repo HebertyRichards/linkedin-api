@@ -32,7 +32,10 @@ every ~2 min (±20%)
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
 - **If the job source fails for 10 minutes in a row,** you get one "source failing" alert. It is not
-  repeated until the source recovers.
+  repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
+  recognizes (LinkedIn changed the markup or answered with a challenge page).
+- **Each cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 0 new job(s)`), so the logs show
+  the worker is alive even when no job shows up for hours.
 
 ## Environment variables
 
@@ -42,7 +45,7 @@ error names the missing variables and never prints their values.
 
 | Variable | Required | Default | What it is |
 |---|---|---|---|
-| `JOB_KEYWORDS` | yes | — | Up to 3 searches, comma separated: `python, typescript` |
+| `JOB_KEYWORDS` | yes | — | Up to 3 searches, comma separated: `python, typescript`. Try each term in LinkedIn's search first: a term LinkedIn does not recognize is dropped, and the search returns jobs from any field |
 | `JOB_LOCATION` | yes | — | **English** name as LinkedIn spells it: `Brazil`, `São Paulo`. `Brasil` is ignored by LinkedIn and returns US jobs |
 | `RESEND_API_KEY` | email | — | Resend API key |
 | `EMAIL_TO` | email | — | Who gets the email |
@@ -56,6 +59,7 @@ error names the missing variables and never prints their values.
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |
 | `LOG_LEVEL` | no | `INFO` | |
 | `APP_ENV` | no | `development` | `production` switches the logs to JSON |
+| `LOG_JSON` | no | `false` | `true` switches the logs to JSON without changing `APP_ENV` |
 
 ### How to get each value
 

@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.channels.base import Message
 from app.config.settings import Channel, Settings
-from app.errors import ChannelError, SourceUnavailableError
+from app.errors import SourceUnavailableError
 from app.schemas.job import Job
 from app.services.dispatcher import Dispatcher
 from app.services.watcher import Watcher
@@ -73,7 +73,7 @@ class FakeSource:
 
 
 class FakeNotifier:
-    def __init__(self, name: Channel, fail_with: ChannelError | None = None) -> None:
+    def __init__(self, name: Channel, fail_with: Exception | None = None) -> None:
         self.name: Channel = name
         self.fail_with = fail_with
         self.sent: list[Message] = []

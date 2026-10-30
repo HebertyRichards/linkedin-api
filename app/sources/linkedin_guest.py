@@ -44,9 +44,11 @@ class _CardParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.cards: list[dict[str, str]] = []
+        self.tags = 0
         self._field: str | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags += 1
         attributes = dict(attrs)
         urn = attributes.get("data-entity-urn") or ""
         if urn.startswith(_URN_PREFIX):
@@ -71,10 +73,19 @@ class _CardParser(HTMLParser):
 
 
 def parse_cards(html: str) -> tuple[list[Job], int]:
-    """The valid jobs on a page and how many cards it had (a short page means it was the last)."""
+    """The valid jobs on a page and how many cards it had (a short page means it was the last).
+
+    A search with no results comes back with no tags at all ("<!DOCTYPE html><!---->"). Markup without a
+    usable card means LinkedIn changed the page or answered with a challenge: that raises, so it counts as
+    a source failure instead of passing for "no new jobs".
+    """
     parser = _CardParser()
     parser.feed(html)
     parser.close()
+    if not parser.cards:
+        if parser.tags:
+            raise SourceUnavailableError("unrecognized page: markup changed or a challenge page")
+        return [], 0
     jobs: list[Job] = []
     for card in parser.cards:
         try:
@@ -88,6 +99,8 @@ def parse_cards(html: str) -> tuple[list[Job], int]:
             )
         except ValidationError:
             logger.warning("Skipped a job card that failed validation (markup changed?)")
+    if not jobs:
+        raise SourceUnavailableError(f"none of the {len(parser.cards)} job cards passed validation: markup changed")
     return jobs, len(parser.cards)
 
 
@@ -131,4 +144,8 @@ class LinkedInGuestSource:
         if response.status_code != 200:
             self._breaker.record_failure()
             raise SourceUnavailableError(f"status {response.status_code}")
-        return parse_cards(response.text)
+        try:
+            return parse_cards(response.text)
+        except SourceUnavailableError:
+            self._breaker.record_failure()
+            raise

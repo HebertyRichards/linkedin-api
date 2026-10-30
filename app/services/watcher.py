@@ -93,6 +93,12 @@ class Watcher:
             await self._notify(list(new.values()), now)
         if self._store.prune(now) or state_changed:
             await self._store.save()
+        logger.info(
+            "Cycle done: %d of %d search(es) answered, %d new job(s)",
+            len(self._searches) - failed,
+            len(self._searches),
+            len(new),
+        )
 
     async def _notify(self, jobs: list[Job], now: datetime) -> None:
         for group in batches(jobs):

@@ -214,7 +214,10 @@ dois. É a troca do "pelo menos uma vez", e fica documentada no README.
 
 **Ficar sabendo quando o worker para de funcionar.** Se a fonte falhar por 10 minutos seguidos, o
 worker envia **um** aviso "fonte de vagas falhando desde HH:MM" pelos canais e não repete até ela
-voltar. Sem isso, um bloqueio passaria em silêncio.
+voltar. Sem isso, um bloqueio passaria em silêncio. Conta como falha também uma página 200 com HTML
+mas sem card reconhecido (layout mudou ou página de verificação). Uma busca sem resultado volta sem
+nenhuma tag (`<!DOCTYPE html><!---->`, observado em 2026-10-29) e continua sendo "0 vagas". Cada ciclo
+grava uma linha `Cycle done: ...` no log, para distinguir "sem vagas" de "travado".
 
 ---
 

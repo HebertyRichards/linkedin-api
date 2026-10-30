@@ -53,3 +53,26 @@ async def test_block_answer_opens_the_circuit() -> None:
             await source.fetch_recent("python", "Brazil")
 
     assert len(requests) == 1
+
+
+async def test_empty_search_is_zero_jobs_not_a_failure() -> None:
+    # The body LinkedIn returned for a search with no results on 2026-10-29.
+    empty = "<!DOCTYPE html>\n\n<!---->  "
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text=empty))) as client:
+        assert await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil") == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["<html><body><h1>Let's do a quick security check</h1></body></html>", card("4408463983", title="")],
+    ids=["challenge-page", "only-invalid-cards"],
+)
+async def test_page_without_a_usable_card_is_a_failure(body: str) -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text=body))) as client:
+        source = LinkedInGuestSource(client, page_delay=0)
+        for _ in range(3):
+            with pytest.raises(SourceUnavailableError, match="markup changed"):
+                await source.fetch_recent("python", "Brazil")
+        # Three failures open the circuit, so a broken page is not requested every cycle.
+        with pytest.raises(SourceUnavailableError, match="circuit open"):
+            await source.fetch_recent("python", "Brazil")

@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -31,6 +32,27 @@ async def test_fallback_channel_delivers_when_the_primary_fails() -> None:
     await watcher.cycle()
 
     assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_unexpected_error_in_the_primary_still_reaches_the_fallback() -> None:
+    whatsapp = FakeNotifier("whatsapp", fail_with=AttributeError("'list' object has no attribute 'get'"))
+    email = FakeNotifier("email")
+    watcher = make_watcher(FakeSource([[], [job(1)]]), [whatsapp, email])
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_each_cycle_logs_a_summary(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    watcher = make_watcher(FakeSource([[], [job(1)]]), [FakeNotifier("email")])
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert "Cycle done: 1 of 1 search(es) answered, 1 new job(s)" in caplog.text
 
 
 async def test_job_stays_pending_when_every_channel_fails(caplog: pytest.LogCaptureFixture) -> None:

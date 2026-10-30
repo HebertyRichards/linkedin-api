@@ -26,6 +26,9 @@ class Dispatcher:
             except ChannelUnavailableError as e:
                 logger.warning("Channel %s unavailable: %s", channel.name, e)
                 failures.append(f"{channel.name}=unavailable({e})")
+            except Exception as e:
+                logger.exception("Channel %s failed unexpectedly", channel.name)
+                failures.append(f"{channel.name}=error({type(e).__name__})")
             else:
                 if failures:
                     logger.info("Delivered by the fallback channel %s", channel.name)
