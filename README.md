@@ -15,7 +15,11 @@ It does not apply for you, does not list every job, and needs no database.
 ## How it works
 
 ```
-every ~2 min (±20%)
+at boot, then every 2 hours: digest
+  for each search: Easy Apply jobs posted in the last day (f_TPR=r86400)
+  send up to 10 not sent yet in one message (catches jobs that reached the search late)
+
+every ~15 min (±20%)
   for each search (max 3): Easy Apply jobs posted in the last hour (f_AL=true, f_TPR=r3600), all pages
   new = job ids not seen before
   first read of a search = baseline: what is already posted is marked as seen, nothing is sent
@@ -55,7 +59,7 @@ error names the missing variables and never prints their values.
 | `EVOLUTION_INSTANCE` | WhatsApp | — | Instance name |
 | `WHATSAPP_TO` | WhatsApp | — | Your number with country and area code (`5511999999999`) or a group id (`...@g.us`) |
 | `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first when both are set |
-| `POLL_INTERVAL_SECONDS` | no | `120` | Seconds between cycles, minimum 60 |
+| `POLL_INTERVAL_SECONDS` | no | `900` | Seconds between cycles, minimum 60 |
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |
 | `LOG_LEVEL` | no | `INFO` | |
 | `APP_ENV` | no | `development` | `production` switches the logs to JSON |
@@ -97,7 +101,8 @@ cp .env.example .env  # fill in the values
 make run
 ```
 
-The first cycle only takes the baseline; alerts start with the next job that gets posted. Stop with Ctrl+C.
+At boot the digest sends up to 10 jobs from the last day; the first cycle then takes the baseline, and
+alerts start with the next job that gets posted. Stop with Ctrl+C.
 
 ## Deploying on Railway
 

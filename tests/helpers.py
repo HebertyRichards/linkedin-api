@@ -63,10 +63,12 @@ class FakeSource:
     def __init__(self, results: list[list[Job] | SourceUnavailableError]) -> None:
         self._results = results
         self.calls = 0
+        self.windows: list[int] = []
 
-    async def fetch_recent(self, keywords: str, location: str) -> list[Job]:
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int) -> list[Job]:
         result = self._results[min(self.calls, len(self._results) - 1)]
         self.calls += 1
+        self.windows.append(window_seconds)
         if isinstance(result, SourceUnavailableError):
             raise result
         return result

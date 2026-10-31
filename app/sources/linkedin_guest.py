@@ -21,10 +21,6 @@ logger = logging.getLogger(__name__)
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
 PAGE_SIZE = 10
 MAX_PAGES = 3
-# Posted in the last hour. Wider than the poll interval on purpose: a job can reach the search a while
-# after its posting time, and the seen-set already drops the repeats. Results are not sorted by date,
-# so the whole window is read instead of only the first page.
-WINDOW = "r3600"
 _TIMEOUT_SECONDS = 10.0
 _BLOCKED_STATUS = {429, 999}
 _URN_PREFIX = "urn:li:jobPosting:"
@@ -112,22 +108,31 @@ class LinkedInGuestSource:
             failure_threshold=3, recovery_timeout=300.0, max_recovery_timeout=3600.0, name="linkedin"
         )
 
-    async def fetch_recent(self, keywords: str, location: str) -> list[Job]:
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int) -> list[Job]:
+        # Results are not sorted by date, so the whole window is read instead of only the first page.
         if not self._breaker.allow():
             raise SourceUnavailableError("circuit open")
         jobs: list[Job] = []
         for page in range(MAX_PAGES):
             if page:
                 await asyncio.sleep(self._page_delay)
-            page_jobs, cards = await self._fetch_page(keywords, location, start=page * PAGE_SIZE)
+            page_jobs, cards = await self._fetch_page(keywords, location, window_seconds, start=page * PAGE_SIZE)
             jobs.extend(page_jobs)
             if cards < PAGE_SIZE:
                 break
         self._breaker.record_success()
         return jobs
 
-    async def _fetch_page(self, keywords: str, location: str, *, start: int) -> tuple[list[Job], int]:
-        params = {"keywords": keywords, "location": location, "f_AL": "true", "f_TPR": WINDOW, "start": str(start)}
+    async def _fetch_page(
+        self, keywords: str, location: str, window_seconds: int, *, start: int
+    ) -> tuple[list[Job], int]:
+        params = {
+            "keywords": keywords,
+            "location": location,
+            "f_AL": "true",
+            "f_TPR": f"r{window_seconds}",
+            "start": str(start),
+        }
         try:
             response = await self._client.get(SEARCH_URL, params=params, headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
         except httpx.HTTPError as e:

@@ -27,7 +27,7 @@ async def test_reads_every_page_of_the_window_until_a_short_page() -> None:
         return httpx.Response(200, text="".join(card(str(5000 + start + i)) for i in range(size)))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        jobs = await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil")
+        jobs = await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil", window_seconds=3600)
 
     assert len(jobs) == 13
     assert [r.url.params["start"] for r in requests] == ["0", "10"]
@@ -46,11 +46,11 @@ async def test_block_answer_opens_the_circuit() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         source = LinkedInGuestSource(client, page_delay=0)
         with pytest.raises(SourceUnavailableError) as blocked:
-            await source.fetch_recent("python", "Brazil")
+            await source.fetch_recent("python", "Brazil", window_seconds=3600)
         assert blocked.value.blocked
         assert blocked.value.retry_after == 120
         with pytest.raises(SourceUnavailableError, match="circuit open"):
-            await source.fetch_recent("python", "Brazil")
+            await source.fetch_recent("python", "Brazil", window_seconds=3600)
 
     assert len(requests) == 1
 
@@ -59,7 +59,8 @@ async def test_empty_search_is_zero_jobs_not_a_failure() -> None:
     # The body LinkedIn returned for a search with no results on 2026-10-29.
     empty = "<!DOCTYPE html>\n\n<!---->  "
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, text=empty))) as client:
-        assert await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil") == []
+        source = LinkedInGuestSource(client, page_delay=0)
+        assert await source.fetch_recent("python", "Brazil", window_seconds=3600) == []
 
 
 @pytest.mark.parametrize(
@@ -72,7 +73,7 @@ async def test_page_without_a_usable_card_is_a_failure(body: str) -> None:
         source = LinkedInGuestSource(client, page_delay=0)
         for _ in range(3):
             with pytest.raises(SourceUnavailableError, match="markup changed"):
-                await source.fetch_recent("python", "Brazil")
+                await source.fetch_recent("python", "Brazil", window_seconds=3600)
         # Three failures open the circuit, so a broken page is not requested every cycle.
         with pytest.raises(SourceUnavailableError, match="circuit open"):
-            await source.fetch_recent("python", "Brazil")
+            await source.fetch_recent("python", "Brazil", window_seconds=3600)

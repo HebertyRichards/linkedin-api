@@ -109,6 +109,53 @@ async def test_state_file_survives_a_restart(tmp_path: Path) -> None:
     assert "Python Developer" not in path.read_text(encoding="utf-8")
 
 
+async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_day() -> None:
+    email = FakeNotifier("email")
+    source = FakeSource([[job(n) for n in range(12)]])
+    store = SeenStore(None)
+    store.mark([job(0).key], datetime(2026, 10, 25, tzinfo=UTC))
+    watcher = make_watcher(source, [email], store=store)
+
+    await watcher.digest_if_due()
+
+    assert source.windows == [86400]
+    assert [message.keys for message in email.sent] == [tuple(job(n).key for n in range(1, 11))]
+    assert store.is_seen(job(10).key)
+    assert not store.is_seen(job(11).key)
+
+
+async def test_digest_waits_two_hours_and_sends_only_what_is_still_unseen() -> None:
+    email = FakeNotifier("email")
+    clock = Clock()
+    watcher = make_watcher(FakeSource([[job(1)], [job(1), job(2)]]), [email], clock=clock)
+
+    await watcher.digest_if_due()
+    clock.advance(minutes=119)
+    await watcher.digest_if_due()
+    assert len(email.sent) == 1
+
+    clock.advance(minutes=1)
+    await watcher.digest_if_due()
+    assert [message.keys for message in email.sent] == [(job(1).key,), (job(2).key,)]
+
+
+async def test_digest_stays_due_when_delivery_fails() -> None:
+    email = FakeNotifier("email", fail_with=ChannelUnavailableError("circuit open"))
+    watcher = make_watcher(FakeSource([[job(1)]]), [email])
+
+    await watcher.digest_if_due()
+    email.fail_with = None
+    await watcher.digest_if_due()
+
+    assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_cycle_reads_the_last_hour() -> None:
+    source = FakeSource([[]])
+    await make_watcher(source, [FakeNotifier("email")]).cycle()
+    assert source.windows == [3600]
+
+
 def test_unreadable_state_file_starts_clean(tmp_path: Path) -> None:
     path = tmp_path / "seen.json"
     path.write_text("not json", encoding="utf-8")
