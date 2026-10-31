@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Railway CLI
-        run: npm i -g @railway/cli
+        run: npm i -g @railway/cli@5.71.0
 
       - name: Deploy the tagged commit
         env:

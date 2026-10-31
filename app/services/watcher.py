@@ -20,9 +20,9 @@ INTERVAL_JITTER = 0.2
 # The cycle reads the last hour, wider than the poll interval on purpose: a job can reach the search a
 # while after its posting time, and the seen-set already drops the repeats.
 CYCLE_WINDOW_SECONDS = 3600
-# The digest reads the last day: it catches jobs that reached the search after the cycle's window.
+# The digest reads the last 3 days, never older: it catches jobs that reached the search after the cycle's window.
 DIGEST_EVERY = timedelta(hours=2)
-DIGEST_WINDOW_SECONDS = 86400
+DIGEST_WINDOW_SECONDS = 3 * 86400
 
 
 def _utc_now() -> datetime:

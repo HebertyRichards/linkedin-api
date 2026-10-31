@@ -182,7 +182,7 @@ boot ─► valida env (falha listando só NOMES) ─► carrega STATE_FILE (se 
   │
   └─ estado vazio? ─► BASELINE: busca, marca tudo como visto, não envia nada
   │
-no boot e depois a cada 2h: resumo com até 10 vagas do último dia (f_TPR=r86400) ainda não enviadas,
+no boot e depois a cada 2h: resumo com até 10 vagas dos últimos 3 dias, nunca mais antigas (f_TPR=r259200) ainda não enviadas,
   numa mensagem só; pega as vagas que entraram na busca depois da janela de 1h do ciclo
 loop a cada POLL_INTERVAL_SECONDS ±20% (o próximo ciclo só começa quando o atual termina):
   1. para cada busca (no máximo 3):

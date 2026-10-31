@@ -109,7 +109,7 @@ async def test_state_file_survives_a_restart(tmp_path: Path) -> None:
     assert "Python Developer" not in path.read_text(encoding="utf-8")
 
 
-async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_day() -> None:
+async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_3_days() -> None:
     email = FakeNotifier("email")
     source = FakeSource([[job(n) for n in range(12)]])
     store = SeenStore(None)
@@ -118,7 +118,7 @@ async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_day()
 
     await watcher.digest_if_due()
 
-    assert source.windows == [86400]
+    assert source.windows == [3 * 86400]
     assert [message.keys for message in email.sent] == [tuple(job(n).key for n in range(1, 11))]
     assert store.is_seen(job(10).key)
     assert not store.is_seen(job(11).key)

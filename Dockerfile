@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS builder
+FROM python:3.13.18-slim AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-FROM python:3.13-slim AS runner
+FROM python:3.13.18-slim AS runner
 
 WORKDIR /app
 

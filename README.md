@@ -16,7 +16,7 @@ It does not apply for you, does not list every job, and needs no database.
 
 ```
 at boot, then every 2 hours: digest
-  for each search: Easy Apply jobs posted in the last day (f_TPR=r86400)
+  for each search: Easy Apply jobs posted in the last 3 days, never older (f_TPR=r259200)
   send up to 10 not sent yet in one message (catches jobs that reached the search late)
 
 every ~15 min (±20%)
@@ -101,7 +101,7 @@ cp .env.example .env  # fill in the values
 make run
 ```
 
-At boot the digest sends up to 10 jobs from the last day; the first cycle then takes the baseline, and
+At boot the digest sends up to 10 jobs from the last 3 days; the first cycle then takes the baseline, and
 alerts start with the next job that gets posted. Stop with Ctrl+C.
 
 ## Deploying on Railway
