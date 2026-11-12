@@ -140,13 +140,13 @@ async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_3_day
     assert not store.is_seen(job(11).key)
 
 
-async def test_digest_waits_two_hours_and_sends_only_what_is_still_unseen() -> None:
+async def test_digest_waits_four_hours_and_sends_only_what_is_still_unseen() -> None:
     email = FakeNotifier("email")
     clock = Clock()
     watcher = make_watcher(FakeSource([[job(1)], [job(1), job(2)]]), [email], clock=clock)
 
     await watcher.digest_if_due()
-    clock.advance(minutes=119)
+    clock.advance(minutes=239)
     await watcher.digest_if_due()
     assert len(email.sent) == 1
 

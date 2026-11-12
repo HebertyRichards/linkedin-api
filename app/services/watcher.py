@@ -23,7 +23,8 @@ INTERVAL_JITTER = 0.2
 # while after its posting time, and the seen-set already drops the repeats.
 CYCLE_WINDOW_SECONDS = 3600
 # The digest reads the last 3 days, never older: it catches jobs that reached the search after the cycle's window.
-DIGEST_EVERY = timedelta(hours=2)
+# Every 4 hours: each digest scores up to 10 jobs, and the LLM free quota has to last the day.
+DIGEST_EVERY = timedelta(hours=4)
 DIGEST_WINDOW_SECONDS = 3 * 86400
 
 
@@ -97,7 +98,7 @@ class Watcher:
             await self._notify(list(new.values()), now)
         if self._store.prune(now) or state_changed:
             await self._store.save()
-        # A quiet cycle logs at DEBUG; the digest line every 2 hours shows the worker is alive.
+        # A quiet cycle logs at DEBUG; the digest line every 4 hours shows the worker is alive.
         logger.log(
             logging.INFO if new or failed else logging.DEBUG,
             "Cycle done: %d of %d search(es) answered, %d new job(s)",
@@ -107,7 +108,7 @@ class Watcher:
         )
 
     async def digest_if_due(self) -> None:
-        """Every DIGEST_EVERY: up to MAX_PER_MESSAGE jobs from the last day not sent yet, in one message."""
+        """Every DIGEST_EVERY: up to MAX_PER_MESSAGE jobs from the last 3 days not sent yet, in one message."""
         now = self._clock()
         if self._next_digest is not None and now < self._next_digest:
             return

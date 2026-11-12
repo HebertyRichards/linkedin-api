@@ -15,7 +15,7 @@ It does not apply for you, does not list every job, and needs no database.
 ## How it works
 
 ```
-at boot, then every 2 hours: digest
+at boot, then every 4 hours: digest
   for each search: Easy Apply jobs posted in the last 3 days, never older (f_TPR=r259200)
   send up to 10 not sent yet in one message (catches jobs that reached the search late)
 
@@ -43,7 +43,7 @@ every ~30 min (±20%)
   repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
   recognizes (LinkedIn changed the markup or answered with a challenge page).
 - **A cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 1 new job(s)`) only when it found new jobs
-  or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 2 hours shows the worker is
+  or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 4 hours shows the worker is
   alive. A block (429) stops the cycle at the first search, with one warning. Logs go to stdout.
 
 ## Environment variables

@@ -210,7 +210,7 @@ boot ─► valida env (falha listando só NOMES) ─► carrega STATE_FILE (se 
   │
   └─ estado vazio? ─► BASELINE: busca, marca tudo como visto, não envia nada
   │
-no boot e depois a cada 2h: resumo com até 10 vagas dos últimos 3 dias, nunca mais antigas (f_TPR=r259200) ainda não enviadas,
+no boot e depois a cada 4h: resumo com até 10 vagas dos últimos 3 dias, nunca mais antigas (f_TPR=r259200) ainda não enviadas,
   numa mensagem só; pega as vagas que entraram na busca depois da janela de 1h do ciclo
 loop a cada POLL_INTERVAL_SECONDS ±20% (o próximo ciclo só começa quando o atual termina):
   1. para cada busca (no máximo 3):
@@ -248,7 +248,7 @@ voltar. Sem isso, um bloqueio passaria em silêncio. Conta como falha também um
 mas sem card reconhecido (layout mudou ou página de verificação). Uma busca sem resultado volta sem
 nenhuma tag (`<!DOCTYPE html><!---->`, observado em 2026-10-29) e continua sendo "0 vagas". O ciclo
 grava `Cycle done: ...` em INFO só quando achou vaga ou alguma busca falhou; o ciclo sem novidade vai em
-DEBUG, e a linha `Digest done` a cada 2h mostra que o worker está vivo. Era 10 minutos e uma linha por
+DEBUG, e a linha `Digest done` a cada 4h mostra que o worker está vivo. Era 10 minutos e uma linha por
 ciclo; mudou em 2026-11-12, porque os 429 do IP do Railway somem sozinhos em 15-30 min e o resumo de 3
 dias recupera o que passou: o aviso virava ruído.
 
