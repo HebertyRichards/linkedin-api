@@ -91,8 +91,10 @@ def _choices_text(resume: Resume) -> str:
         lines.extend(f"[{item.id}] ({project.nome}) {item.texto}" for item in project.destaques)
     fixed = [project.nome for project in resume.projetos if project.fixo]
     lines.append(f"PROJETOS FIXOS: {', '.join(fixed) or '-'}")
-    lines.append("PROJETOS PARA ESCOLHER:")
-    lines.extend(f"[{p.id}] {p.nome}: {', '.join(p.tecnologias)}" for p in resume.projetos if not p.fixo)
+    choosable = [f"[{p.id}] {p.nome}: {', '.join(p.tecnologias)}" for p in resume.projetos if not p.fixo]
+    # Every project fixed: nothing to pick, and saying so keeps the model from making an id up.
+    lines.append("PROJETOS PARA ESCOLHER:" + ("" if choosable else ' nenhum (responda projeto "")'))
+    lines.extend(choosable)
     lines.append(f"HABILIDADES: {', '.join(_skills(resume))}")
     lines.append(f"SÓ SE A VAGA CITAR: {', '.join(resume.habilidades_sob_demanda) or '-'}")
     lines.append(f"RESUMO ATUAL: {resume.resumo}")

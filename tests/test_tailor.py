@@ -7,7 +7,14 @@ import pytest
 from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
 from app.services.llm import ChatClient
 from app.services.resume_pdf import render_pdf
-from app.services.tailor import ResumeTailor, TailorChoice, _filename, build_tailored, safe_summary
+from app.services.tailor import (
+    ResumeTailor,
+    TailorChoice,
+    _choices_text,
+    _filename,
+    build_tailored,
+    safe_summary,
+)
 from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
 
 TODAY = date(2026, 11, 12)
@@ -51,6 +58,15 @@ def test_the_fixed_project_stays_and_one_more_is_picked(resume: Resume) -> None:
     assert [p.id for p in tailored(resume).projetos] == ["clima", "horta"]
     # An id that does not exist falls back to the first project that can be chosen.
     assert [p.id for p in tailored(resume, projeto="nao-existe").projetos] == ["clima", "feira"]
+
+
+def test_with_every_project_fixed_all_of_them_stay(resume: Resume) -> None:
+    fixed = resume.model_copy(update={"projetos": [p.model_copy(update={"fixo": True}) for p in resume.projetos]})
+
+    result = build_tailored(fixed, choice(projeto=""), "Vaga com Go.", fixed.prompt_text(TODAY))
+
+    assert [p.id for p in result.projetos] == ["clima", "feira", "horta"]
+    assert 'nenhum (responda projeto "")' in _choices_text(fixed)
 
 
 def test_skills_are_only_the_resume_ones_and_on_demand_only_when_the_job_names_them(resume: Resume) -> None:
