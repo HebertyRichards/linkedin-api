@@ -149,14 +149,17 @@ class FakeAssessor:
 class FakeTailor:
     """Builds a small fake file for any job and records which jobs asked for one."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, down: bool = False) -> None:
         self.calls: list[str] = []
+        self._down = down  # the LLM did not answer: no file
 
     def cached(self, job: Job) -> TailoredFile | None:
         return None
 
     async def tailor(self, job: Job, details: JobDetails) -> TailoredFile | None:
         self.calls.append(job.key)
+        if self._down:
+            return None
         resume = TailoredResume(resumo="Resumo ajustado.", experiencias=[], projetos=[], habilidades=["Go"])
         return TailoredFile(resume=resume, attachment=Attachment(f"Curriculo-{job.id}.pdf", b"%PDF-fake"))
 

@@ -40,6 +40,7 @@ class _Batch:
     scores: dict[str, Assessment] = field(default_factory=dict)
     tailored: dict[str, TailoredFile] = field(default_factory=dict)
     held: int = 0
+    ai_on: bool = False  # scoring is configured: a job without a score says the analysis is down
 
 
 def _utc_now() -> datetime:
@@ -143,7 +144,7 @@ class Watcher:
         batch = await self._assess(list(pending.values())[:MAX_PER_MESSAGE], now)
         picked, held = batch.jobs, batch.held
         if picked:
-            message = job_message(picked, batch.scores, batch.tailored)
+            message = job_message(picked, batch.scores, batch.tailored, ai_on=batch.ai_on)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 return  # left unmarked and still due: the next loop tries again
@@ -221,7 +222,7 @@ class Watcher:
         if len(self._held) > _HELD_LIMIT:
             self._held.clear()
         self._held = (self._held | held) - {job.key for job in kept}
-        return _Batch(kept, scores, tailored, len(held))
+        return _Batch(kept, scores, tailored, len(held), ai_on=True)
 
     async def _tailored(self, job: Job, assessment: Assessment, details: JobDetails | None) -> TailoredFile | None:
         if self._tailor is None or assessment.score < TAILOR_MIN_SCORE or assessment.workplace == "onsite":
@@ -232,7 +233,7 @@ class Watcher:
     async def _notify(self, jobs: list[Job], now: datetime) -> None:
         batch = await self._assess(jobs, now)
         for group in batches(batch.jobs):
-            message = job_message(group, batch.scores, batch.tailored)
+            message = job_message(group, batch.scores, batch.tailored, ai_on=batch.ai_on)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 # Left unmarked on purpose: the next cycle tries these jobs again.

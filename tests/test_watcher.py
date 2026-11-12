@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
-from app.services.messages import job_message
+from app.services.messages import AI_DOWN, RESUME_DOWN, job_message
 from app.state.seen_store import SeenStore
 from tests.helpers import (
     Clock,
@@ -237,6 +237,7 @@ async def test_job_page_down_still_sends_the_job_without_a_score() -> None:
 
     assert [message.keys for message in email.sent] == [(job(1).key,)]
     assert "Nota" not in email.sent[0].text
+    assert AI_DOWN in email.sent[0].text and AI_DOWN in email.sent[0].html
 
 
 async def test_a_job_already_scored_skips_its_job_page() -> None:
@@ -301,10 +302,10 @@ async def test_digest_held_by_a_block_runs_again_on_the_next_loop() -> None:
     assert [message.keys for message in email.sent] == [(job(1).key,)]
 
 
-async def test_only_a_score_from_80_up_gets_the_tailored_resume_attached() -> None:
+async def test_only_a_score_from_50_up_gets_the_tailored_resume_attached() -> None:
     email = FakeNotifier("email")
     tailor = FakeTailor()
-    scores = {job(1).key: assessment(80), job(2).key: assessment(79), job(3).key: assessment(95, "onsite")}
+    scores = {job(1).key: assessment(50), job(2).key: assessment(49), job(3).key: assessment(95, "onsite")}
     watcher = make_watcher(
         FakeSource([[], [job(n) for n in range(1, 4)]]), [email], assessor=FakeAssessor(scores), tailor=tailor
     )
@@ -318,4 +319,32 @@ async def test_only_a_score_from_80_up_gets_the_tailored_resume_attached() -> No
     assert "Currículo ajustado em anexo: Curriculo-4400000001.pdf" in best.text
     assert "Resumo: Resumo ajustado." in best.text and "Currículo ajustado" in best.html
     assert other.attachments == ()
-    assert "Currículo ajustado" not in other.text
+    assert "Currículo ajustado" not in other.text and AI_DOWN not in other.text
+
+
+async def test_llm_down_says_so_in_the_email_and_the_job_still_goes() -> None:
+    email = FakeNotifier("email")
+    # job(1) scored but its resume failed; job(2) got no score at all.
+    watcher = make_watcher(
+        FakeSource([[], [job(1), job(2)]]),
+        [email],
+        assessor=FakeAssessor({job(1).key: assessment(70)}),
+        tailor=FakeTailor(down=True),
+    )
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    scored, unscored = email.sent
+    assert RESUME_DOWN in scored.text and scored.attachments == ()
+    assert AI_DOWN in unscored.text and RESUME_DOWN not in unscored.text
+
+
+async def test_without_ai_configured_there_is_no_down_notice() -> None:
+    email = FakeNotifier("email")
+    watcher = make_watcher(FakeSource([[], [job(1)]]), [email])
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert AI_DOWN not in email.sent[0].text

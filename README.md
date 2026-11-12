@@ -38,8 +38,8 @@ every ~30 min (±20%)
 - **With `LLM_API_KEY` and `RESUME_FILE`, each new job gets a score (0-100)** against your resume, with the
   reason and what is missing, and the best scores go first. The AI (Groq's free tier by default) reads the
   job page and the resume without the contact block. On-site jobs are dropped. When the AI is down or the free
-  quota is used up, the job still goes out, without a score.
-- **A job scored 80 or more (not on-site) also gets a resume tailored to it,** attached to the email as a
+  quota is used up, the job still goes out, without a score, and the email says the analysis is down.
+- **A job scored 50 or more (not on-site) also gets a resume tailored to it,** attached to the email as a
   PDF, with a preview in the card (summary, top highlights, projects). The AI only picks and orders what
   the resume YAML already has and rewrites the summary; the code checks every pick and drops a summary
   that names a technology or a seniority level the resume does not have. WhatsApp gets the text only.
@@ -74,7 +74,7 @@ error names the missing variables and never prints their values.
 | `RESUME_YAML` | with `LLM_API_KEY` (or `RESUME_FILE`) | — | The resume YAML itself, pasted as a multi-line variable. Railway |
 | `LLM_API_URL` | no | `https://api.groq.com/openai/v1` | Any OpenAI-compatible API |
 | `LLM_MODEL` | no | `openai/gpt-oss-20b` | Model used for the score |
-| `LLM_TAILOR_MODEL` | no | `openai/gpt-oss-120b` | Model that tailors the resume (score 80 or more) |
+| `LLM_TAILOR_MODEL` | no | `openai/gpt-oss-120b` | Model that tailors the resume (score 50 or more) |
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |
 | `LOG_LEVEL` | no | `INFO` | |
 | `APP_ENV` | no | `development` | `production` switches the logs to JSON |

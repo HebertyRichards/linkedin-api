@@ -5,11 +5,14 @@ from html import escape
 
 from app.channels.base import Message
 from app.schemas.job import Assessment, Job, clip
-from app.services.tailor import TailoredFile
+from app.services.tailor import TAILOR_MIN_SCORE, TailoredFile
 
 # Up to this many new jobs in one cycle go out one message each; more than that are grouped.
 SINGLE_LIMIT = 3
 MAX_PER_MESSAGE = 10
+# Shown when the AI was asked but did not answer (Groq down, quota used up, job page blocked): the job still goes.
+AI_DOWN = "Análise da vaga fora do ar no momento. Confira os requisitos direto na vaga."
+RESUME_DOWN = "Currículo ajustado indisponível no momento."
 
 
 def batches(jobs: Sequence[Job]) -> list[list[Job]]:
@@ -22,19 +25,22 @@ def _details(job: Job) -> str:
     return " · ".join(part for part in (job.company, job.location) if part)
 
 
-def _score_lines(assessment: Assessment | None) -> list[str]:
+def _score_lines(assessment: Assessment | None, ai_on: bool = False) -> list[str]:
     if assessment is None:
-        return []
+        return [AI_DOWN] if ai_on else []
     lines = [f"Nota {assessment.score}/100: {assessment.reasons}"]
     if assessment.gaps:
         lines.append("Falta: " + ", ".join(assessment.gaps))
     return lines
 
 
-def _resume_lines(tailored: TailoredFile | None) -> list[str]:
+def _resume_lines(
+    tailored: TailoredFile | None, assessment: Assessment | None = None, ai_on: bool = False
+) -> list[str]:
     """A preview of what the tailored resume leads with; the full one is the attached PDF."""
     if tailored is None:
-        return []
+        due = assessment is not None and assessment.score >= TAILOR_MIN_SCORE and assessment.workplace != "onsite"
+        return [RESUME_DOWN] if ai_on and due else []
     resume = tailored.resume
     top = [item.texto for job in resume.experiencias for item in job.destaques][:3]
     return [
@@ -54,10 +60,10 @@ _BUTTON = (
 )
 
 
-def _card(job: Job, assessment: Assessment | None, tailored: TailoredFile | None) -> str:
+def _card(job: Job, assessment: Assessment | None, tailored: TailoredFile | None, ai_on: bool) -> str:
     score = f'<div style="font-size:13px;color:#1a4d8f"><b>{assessment.score}/100</b></div>' if assessment else ""
-    lines = "".join(f'<div style="margin-top:4px">{escape(line)}</div>' for line in _score_lines(assessment))
-    preview = _resume_lines(tailored)
+    lines = "".join(f'<div style="margin-top:4px">{escape(line)}</div>' for line in _score_lines(assessment, ai_on))
+    preview = _resume_lines(tailored, assessment, ai_on)
     resume = (
         f'<div style="{_PREVIEW}"><b>{escape(preview[0])}</b>'
         + "".join(f"<br>{escape(line)}" for line in preview[1:])
@@ -77,8 +83,12 @@ def job_message(
     jobs: Sequence[Job],
     assessments: Mapping[str, Assessment] | None = None,
     tailored: Mapping[str, TailoredFile] | None = None,
+    *,
+    ai_on: bool = False,
 ) -> Message:
-    """No clock in the text: a repeat of the same jobs, scores and files gives the same body and key."""
+    """No clock in the text: a repeat of the same jobs, scores and files gives the same body and key.
+
+    `ai_on`: scoring is configured, so a job without a score or resume says the analysis is down."""
     scores = assessments or {}
     files = tailored or {}
     keys = tuple(job.key for job in jobs)
@@ -98,8 +108,8 @@ def job_message(
             for line in (
                 f"*{job.title}*",
                 _details(job),
-                *_score_lines(scores.get(job.key)),
-                *_resume_lines(files.get(job.key)),
+                *_score_lines(scores.get(job.key), ai_on),
+                *_resume_lines(files.get(job.key), scores.get(job.key), ai_on),
                 job.url,
             )
             if line
@@ -116,7 +126,7 @@ def job_message(
         subject=subject,
         text=text,
         html=f'<h2 style="font-family:Arial,sans-serif">{heading}</h2>'
-        + "".join(_card(job, scores.get(job.key), files.get(job.key)) for job in jobs),
+        + "".join(_card(job, scores.get(job.key), files.get(job.key), ai_on) for job in jobs),
         idempotency_key=f"jobs-{fingerprint.hexdigest()[:32]}",
         keys=keys,
         attachments=attachments,

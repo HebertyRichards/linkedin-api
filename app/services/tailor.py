@@ -19,7 +19,7 @@ from app.services.resume_pdf import render_pdf
 logger = logging.getLogger(__name__)
 
 # A score from this one up gets a resume tailored to the job, attached to the email as a PDF.
-TAILOR_MIN_SCORE = 80
+TAILOR_MIN_SCORE = 50
 _MAX_PER_EXPERIENCE = 6
 _MAX_SUMMARY = 600
 # A tailored PDF is ~5 KB; kept for jobs still pending so a retry sends the same file without a new LLM call.
@@ -105,21 +105,28 @@ def _ranked(items: list[Highlight], rank: dict[str, int], limit: int | None = No
     return ordered[:limit] if limit else ordered
 
 
-def safe_summary(candidate: str, resume: Resume, known_text: str) -> str:
+def safe_summary(candidate: str, resume: Resume, known_text: str, job_description: str = "") -> str:
     """The rewritten summary, or the base one when it names a term the resume does not have (an invented
     technology, for instance) or a seniority level. Failing safe costs only the rewrite."""
     text = " ".join(candidate.split())
     if not text or len(text) > _MAX_SUMMARY:
         return resume.resumo
     known = known_text.lower()
-    for word in _WORD.findall(text):
-        term = word.rstrip(".-/").lower()
-        if term in _SENIORITY:
-            return resume.resumo
-        technical = any(c.isupper() or c.isdigit() or c in ".+#/" for c in word.rstrip(".-/"))
-        if technical and term not in known:
-            logger.info("Tailored summary dropped: it names a term the resume does not have")
-            return resume.resumo
+    asked = job_description.lower()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        for index, word in enumerate(_WORD.findall(sentence)):
+            for part in word.rstrip(".-/").split("/"):  # "React/TypeScript" is two known terms
+                term = part.lower()
+                if term in _SENIORITY:
+                    return resume.resumo
+                # A capital, a digit or one of .+# marks a technical term, which the resume must have. A capital
+                # only at a sentence start is plain Portuguese ("Atuei") unless the word comes from the job text.
+                capital = any(c.isupper() for c in (part[1:] if index == 0 else part))
+                copied = index == 0 and part[:1].isupper() and term in asked
+                technical = capital or copied or any(c.isdigit() or c in ".+#" for c in part)
+                if term and technical and term not in known:
+                    logger.info("Tailored summary dropped: it names a term the resume does not have")
+                    return resume.resumo
     return text
 
 
@@ -144,7 +151,7 @@ def build_tailored(resume: Resume, choice: TailorChoice, job_description: str, k
     chosen = [canonical[s.lower()] for s in choice.habilidades if s.lower() in canonical]
     skills = list(dict.fromkeys([*chosen, *base, *on_demand]))
     return TailoredResume(
-        resumo=safe_summary(choice.resumo, resume, known_text),
+        resumo=safe_summary(choice.resumo, resume, known_text, job_description),
         experiencias=experiences,
         projetos=projects,
         habilidades=skills,

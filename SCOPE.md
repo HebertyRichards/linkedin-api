@@ -193,7 +193,8 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
 - **A resposta da IA é dado não confiável:** JSON com schema estrito no pedido e validação no
   `schemas/job.py`, com limite de tamanho, igual ao dado da fonte.
 - **Falha segura para o alerta:** IA fora, cota esgotada (429 abre o breaker pelo `Retry-After`) ou página
-  da vaga indisponível: a vaga vai sem nota, nunca fica presa.
+  da vaga indisponível: a vaga vai sem nota, nunca fica presa, e o email avisa "Análise da vaga fora do ar
+  no momento" (ou "Currículo ajustado indisponível" quando só o currículo falhou).
 - **Observado (2026-11-12):** o filtro `f_WT` (presencial/remoto) não tem efeito no `jobs-guest`, e a página
   da vaga não traz o modelo de trabalho num campo próprio. Por isso quem classifica é a IA, lendo a descrição.
 - **Descrição cortada em 6.000 caracteres** (~1.500 tokens): cabe na cota por minuto sem perder os
@@ -201,7 +202,7 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
 - A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
   gasta cota nem refaz a página.
 
-**Fase 3: currículo ajustado (2026-11-12).** Nota 80 ou mais, fora presencial: o email leva o currículo
+**Fase 3: currículo ajustado (2026-11-12).** Nota 50 ou mais, fora presencial: o email leva o currículo
 ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe só o texto).
 
 - **A IA escolhe, o código monta:** ela devolve ids de destaques, um projeto e as habilidades, e reescreve

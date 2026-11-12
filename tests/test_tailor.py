@@ -66,12 +66,20 @@ def test_skills_are_only_the_resume_ones_and_on_demand_only_when_the_job_names_t
     [
         "Engenheira de dados com Go e Kubernetes.",  # a technology the resume does not have
         "Engenheira de dados pleno com Go.",  # a seniority level
+        "Pipelines com Go/Kubernetes.",  # an unknown term joined to a known one
+        "Engenheira de dados. Spark e Go.",  # a term copied from the job, at a sentence start
         "",
         "x" * 700,
     ],
 )
 def test_a_summary_that_is_not_safe_falls_back_to_the_base_one(resume: Resume, candidate: str) -> None:
-    assert safe_summary(candidate, resume, resume.prompt_text(TODAY)) == resume.resumo
+    job_description = "Vaga com Spark e Go."
+    assert safe_summary(candidate, resume, resume.prompt_text(TODAY), job_description) == resume.resumo
+
+
+def test_plain_words_at_a_sentence_start_and_joined_known_terms_are_kept(resume: Resume) -> None:
+    candidate = "Atuei com Go/Kafka em pipelines. Otimizei filas de pedidos."
+    assert safe_summary(candidate, resume, resume.prompt_text(TODAY), "Vaga com Spark e Go.") == candidate
 
 
 def test_a_safe_summary_is_kept(resume: Resume) -> None:
