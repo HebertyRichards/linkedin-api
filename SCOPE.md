@@ -250,7 +250,7 @@ event loop.
 Aqui o rate limit é **de saída**: não existe API de entrada para limitar.
 
 - **Fonte:** por busca e por ciclo, de 1 a 3 páginas de 10 vagas. Numa janela de 1h, quase sempre é 1.
-  - `POLL_INTERVAL_SECONDS` com default 900 (15 min) e mínimo 60, validado no boot.
+  - `POLL_INTERVAL_SECONDS` com default 1800 (30 min) e mínimo 60, validado no boot.
   - Jitter de ±20% no intervalo, para não bater sempre no mesmo segundo [I].
   - No máximo 3 buscas, com as requisições espaçadas dentro do ciclo. Um bloqueio (429) para o ciclo na
     primeira busca: as outras só falhariam também.
@@ -333,7 +333,7 @@ quedas.
 | `EVOLUTION_API_KEY` | canal WhatsApp | — | token da instância | Evolution Manager, na instância (local exato: conferir na v2.3.7) |
 | `WHATSAPP_TO` | canal WhatsApp | — | seu número (`5511999999999`) ou grupo (`...@g.us`) | grupo: `GET /group/fetchAllGroups/{instance}` (README do whatsapp-automation) |
 | `NOTIFY_PRIMARY` | não | `whatsapp` | canal tentado primeiro (só importa com os 2) | — |
-| `POLL_INTERVAL_SECONDS` | não | `900` | intervalo entre ciclos; mínimo 60 | — |
+| `POLL_INTERVAL_SECONDS` | não | `1800` | intervalo entre ciclos; mínimo 60 | — |
 | `STATE_FILE` | não | vazio = só memória | ex.: `/data/seen.json` num volume | Railway → serviço → Volumes → montar em `/data` |
 | `LOG_LEVEL` | não | `INFO` | — | — |
 

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     job_keywords: str = Field(...)
     job_location: str = Field(..., min_length=2)
-    poll_interval_seconds: int = Field(default=900, ge=60)
+    poll_interval_seconds: int = Field(default=1800, ge=60)
     state_file: str = Field(default="")
 
     resend_api_key: SecretStr = Field(default=SecretStr(""))
