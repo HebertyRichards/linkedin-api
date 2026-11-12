@@ -111,7 +111,7 @@ class LinkedInGuestSource:
     async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int) -> list[Job]:
         # Results are not sorted by date, so the whole window is read instead of only the first page.
         if not self._breaker.allow():
-            raise SourceUnavailableError("circuit open")
+            raise SourceUnavailableError("circuit open", blocked=True)
         jobs: list[Job] = []
         for page in range(MAX_PAGES):
             if page:

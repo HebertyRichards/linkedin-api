@@ -214,12 +214,15 @@ confirmação de entrega, que exige webhook de status (fora do v1).
 **Duplicata possível.** Se o principal der timeout e o reserva funcionar, você pode receber os
 dois. É a troca do "pelo menos uma vez", e fica documentada no README.
 
-**Ficar sabendo quando o worker para de funcionar.** Se a fonte falhar por 10 minutos seguidos, o
+**Ficar sabendo quando o worker para de funcionar.** Se a fonte falhar por 1 hora seguida, o
 worker envia **um** aviso "fonte de vagas falhando desde HH:MM" pelos canais e não repete até ela
 voltar. Sem isso, um bloqueio passaria em silêncio. Conta como falha também uma página 200 com HTML
 mas sem card reconhecido (layout mudou ou página de verificação). Uma busca sem resultado volta sem
-nenhuma tag (`<!DOCTYPE html><!---->`, observado em 2026-10-29) e continua sendo "0 vagas". Cada ciclo
-grava uma linha `Cycle done: ...` no log, para distinguir "sem vagas" de "travado".
+nenhuma tag (`<!DOCTYPE html><!---->`, observado em 2026-10-29) e continua sendo "0 vagas". O ciclo
+grava `Cycle done: ...` em INFO só quando achou vaga ou alguma busca falhou; o ciclo sem novidade vai em
+DEBUG, e a linha `Digest done` a cada 2h mostra que o worker está vivo. Era 10 minutos e uma linha por
+ciclo; mudou em 2026-11-12, porque os 429 do IP do Railway somem sozinhos em 15-30 min e o resumo de 3
+dias recupera o que passou: o aviso virava ruído.
 
 ---
 
@@ -249,7 +252,8 @@ Aqui o rate limit é **de saída**: não existe API de entrada para limitar.
 - **Fonte:** por busca e por ciclo, de 1 a 3 páginas de 10 vagas. Numa janela de 1h, quase sempre é 1.
   - `POLL_INTERVAL_SECONDS` com default 900 (15 min) e mínimo 60, validado no boot.
   - Jitter de ±20% no intervalo, para não bater sempre no mesmo segundo [I].
-  - No máximo 3 buscas, com as requisições espaçadas dentro do ciclo.
+  - No máximo 3 buscas, com as requisições espaçadas dentro do ciclo. Um bloqueio (429) para o ciclo na
+    primeira busca: as outras só falhariam também.
   - Sem login, sem cookies, de um único IP.
   - Com 3 buscas a cada 2 min, são ~2.160 requisições por dia.
 - **Resend:** 10 req/s e 100 por dia no plano grátis [V].
@@ -446,7 +450,7 @@ Os comentários ficam em inglês e enxutos.
         elas na saída.
   - [ ] O estado gravado contém só ids e datas.
 - **Robustez:**
-  - [ ] A fonte falhando por 10 min seguidos gera um único aviso.
+  - [ ] A fonte falhando por 1 hora seguida gera um único aviso.
 
 ## 10. Fora do escopo do v1
 

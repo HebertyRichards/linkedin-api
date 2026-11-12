@@ -1,5 +1,8 @@
 class SourceUnavailableError(Exception):
-    """The job source failed or refused the request. `blocked` marks a rate-limit or block answer."""
+    """The job source failed or refused the request.
+
+    `blocked` marks a rate-limit, a block or an open breaker: any other call right now fails too.
+    """
 
     def __init__(self, reason: str, *, blocked: bool = False, retry_after: float | None = None) -> None:
         super().__init__(reason)

@@ -35,11 +35,12 @@ every ~15 min (±20%)
 - **"Delivered" means the provider accepted the message** (a 2xx from Resend or Evolution). If the primary
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
-- **If the job source fails for 10 minutes in a row,** you get one "source failing" alert. It is not
+- **If the job source fails for 1 hour in a row,** you get one "source failing" alert. It is not
   repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
   recognizes (LinkedIn changed the markup or answered with a challenge page).
-- **Each cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 0 new job(s)`), so the logs show
-  the worker is alive even when no job shows up for hours.
+- **A cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 1 new job(s)`) only when it found new jobs
+  or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 2 hours shows the worker is
+  alive. A block (429) stops the cycle at the first search, with one warning. Logs go to stdout.
 
 ## Environment variables
 

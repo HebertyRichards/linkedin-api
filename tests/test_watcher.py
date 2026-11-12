@@ -53,6 +53,17 @@ async def test_each_cycle_logs_a_summary(caplog: pytest.LogCaptureFixture) -> No
     await watcher.cycle()
 
     assert "Cycle done: 1 of 1 search(es) answered, 1 new job(s)" in caplog.text
+    assert "Cycle done: 1 of 1 search(es) answered, 0 new job(s)" not in caplog.text
+
+
+async def test_a_block_stops_the_read_with_one_warning(caplog: pytest.LogCaptureFixture) -> None:
+    source = FakeSource([SourceUnavailableError("blocked (429)", blocked=True)])
+    watcher = make_watcher(source, [FakeNotifier("email")], searches=["python", "node", "react"])
+
+    await watcher.cycle()
+
+    assert source.calls == 1
+    assert caplog.text.count("failed: blocked (429)") == 1
 
 
 async def test_job_stays_pending_when_every_channel_fails(caplog: pytest.LogCaptureFixture) -> None:
@@ -83,7 +94,12 @@ async def test_source_down_alert_goes_out_once() -> None:
     clock = Clock()
     watcher = make_watcher(FakeSource([SourceUnavailableError("blocked (429)", blocked=True)]), [email], clock=clock)
 
-    for _ in range(4):
+    for _ in range(12):
+        await watcher.cycle()
+        clock.advance(minutes=5)
+    assert email.sent == []  # 55 minutes: a usual 429 clears before this
+
+    for _ in range(3):
         await watcher.cycle()
         clock.advance(minutes=5)
 

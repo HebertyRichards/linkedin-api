@@ -14,7 +14,8 @@ from app.state.seen_store import SeenStore
 
 logger = logging.getLogger(__name__)
 
-SOURCE_DOWN_ALERT_AFTER = timedelta(minutes=10)
+# LinkedIn's 429s on a datacenter IP usually clear within 30 min, and the digest catches up on what was missed.
+SOURCE_DOWN_ALERT_AFTER = timedelta(hours=1)
 # The poll interval moves ±20% so requests do not land on the same second every time.
 INTERVAL_JITTER = 0.2
 # The cycle reads the last hour, wider than the poll interval on purpose: a job can reach the search a
@@ -93,7 +94,9 @@ class Watcher:
             await self._notify(list(new.values()), now)
         if self._store.prune(now) or state_changed:
             await self._store.save()
-        logger.info(
+        # A quiet cycle logs at DEBUG; the digest line every 2 hours shows the worker is alive.
+        logger.log(
+            logging.INFO if new or failed else logging.DEBUG,
             "Cycle done: %d of %d search(es) answered, %d new job(s)",
             len(self._searches) - failed,
             len(self._searches),
@@ -125,7 +128,10 @@ class Watcher:
         logger.info("Digest done: %d of %d pending job(s) sent", len(picked), len(pending))
 
     async def _read_searches(self, window_seconds: int) -> list[tuple[str, list[Job]]]:
-        """Each search that answered, with its jobs. A failed search is logged and left out."""
+        """Each search that answered, with its jobs. A failed search is logged and left out.
+
+        A block stops the read: the other searches would only fail too, one warning each.
+        """
         answered: list[tuple[str, list[Job]]] = []
         for index, keywords in enumerate(self._searches):
             if index:
@@ -134,6 +140,8 @@ class Watcher:
                 jobs = await self._source.fetch_recent(keywords, self._location, window_seconds=window_seconds)
             except SourceUnavailableError as e:
                 logger.warning("Search '%s' failed: %s", keywords, e)
+                if e.blocked:
+                    break
                 continue
             answered.append((keywords, jobs))
         return answered

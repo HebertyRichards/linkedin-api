@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 from datetime import UTC, datetime
 
 
@@ -17,7 +18,8 @@ class JsonFormatter(logging.Formatter):
 
 
 def setup_logging(level: str, json_logs: bool) -> None:
-    handler = logging.StreamHandler()
+    # stdout: Railway shows every stderr line as an error, whatever its level.
+    handler = logging.StreamHandler(sys.stdout)
     if json_logs:
         handler.setFormatter(JsonFormatter())
     else:

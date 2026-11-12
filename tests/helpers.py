@@ -103,12 +103,13 @@ def make_watcher(
     *,
     store: SeenStore | None = None,
     clock: Clock | None = None,
+    searches: list[str] | None = None,
 ) -> Watcher:
     return Watcher(
         source=source,
         dispatcher=Dispatcher(channels),
         store=store or SeenStore(None),
-        searches=["python"],
+        searches=searches or ["python"],
         location="Brazil",
         interval_seconds=60,
         search_spacing=(0.0, 0.0),
