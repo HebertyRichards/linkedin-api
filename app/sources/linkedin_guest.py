@@ -12,13 +12,14 @@ import httpx
 from pydantic import ValidationError
 
 from app.errors import SourceUnavailableError
-from app.schemas.job import Job
+from app.schemas.job import Job, JobDetails
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.retry import parse_retry_after
 
 logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{id}"
 PAGE_SIZE = 10
 MAX_PAGES = 3
 _TIMEOUT_SECONDS = 10.0
@@ -32,6 +33,13 @@ _FIELDS = {
     "job-search-card__location": "location",
 }
 _FIELD_TAGS = frozenset({"h3", "h4", "span"})
+# Job page, as observed on the live page (2026-11-12): the description and the criteria list.
+_DESCRIPTION_CLASS = "show-more-less-html__markup"
+_CRITERIA_LABEL_CLASS = "description__job-criteria-subheader"
+_CRITERIA_VALUE_CLASS = "description__job-criteria-text"
+_CRITERIA = {"Seniority level": "seniority", "Employment type": "employment_type"}
+# Block tags end a line, so words of two paragraphs do not run together.
+_BLOCK_TAGS = frozenset({"p", "li", "br", "div", "ul", "ol", "h1", "h2", "h3", "h4"})
 
 
 class _CardParser(HTMLParser):
@@ -66,6 +74,62 @@ class _CardParser(HTMLParser):
         if self._field is not None:
             card = self.cards[-1]
             card[self._field] = f"{card.get(self._field, '')} {data}"
+
+
+class _DetailParser(HTMLParser):
+    """Collects the description text and the criteria (seniority, employment type) of a job page."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.description: list[str] = []
+        self.criteria: dict[str, str] = {}
+        self._description_depth = 0  # >0 while inside the description element
+        self._label: str | None = None
+        self._capture: str | None = None  # "label" or "value" while inside a criteria element
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = (dict(attrs).get("class") or "").split()
+        if self._description_depth:
+            if tag == "div":
+                self._description_depth += 1
+            if tag in _BLOCK_TAGS:
+                self.description.append("\n")
+        elif tag == "div" and _DESCRIPTION_CLASS in classes:
+            self._description_depth = 1
+        elif _CRITERIA_LABEL_CLASS in classes:
+            self._capture, self._label = "label", ""
+        elif _CRITERIA_VALUE_CLASS in classes and self._label is not None:
+            self._capture = "value"
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._description_depth and tag == "div":
+            self._description_depth -= 1
+        if self._capture == "label" and tag == "h3":
+            self._capture = None
+        elif self._capture == "value" and tag == "span":
+            self._capture, self._label = None, None
+
+    def handle_data(self, data: str) -> None:
+        if self._description_depth:
+            self.description.append(data)
+        elif self._capture == "label" and self._label is not None:
+            self._label += data
+        elif self._capture == "value" and self._label is not None:
+            field = _CRITERIA.get(" ".join(self._label.split()))
+            if field:
+                self.criteria[field] = self.criteria.get(field, "") + data
+
+
+def parse_details(html: str) -> JobDetails:
+    """Raises when the page has no description: LinkedIn changed the markup or answered with a challenge."""
+    parser = _DetailParser()
+    parser.feed(html)
+    parser.close()
+    lines = (" ".join(line.split()) for line in "".join(parser.description).splitlines())
+    try:
+        return JobDetails(description="\n".join(line for line in lines if line), **parser.criteria)
+    except ValidationError:
+        raise SourceUnavailableError("job page without a description: markup changed or a challenge page") from None
 
 
 def parse_cards(html: str) -> tuple[list[Job], int]:
@@ -122,6 +186,23 @@ class LinkedInGuestSource:
                 break
         self._breaker.record_success()
         return jobs
+
+    async def fetch_details(self, job: Job) -> JobDetails:
+        """One job page. Only a block answer touches the breaker: a page that fails to parse must not
+        stop the search itself."""
+        if not self._breaker.allow():
+            raise SourceUnavailableError("circuit open")
+        try:
+            response = await self._client.get(DETAIL_URL.format(id=job.id), headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
+        except httpx.HTTPError as e:
+            raise SourceUnavailableError(f"network error: {type(e).__name__}") from e
+        if response.status_code in _BLOCKED_STATUS:
+            retry_after = parse_retry_after(response.headers.get("retry-after"))
+            self._breaker.trip(retry_after)
+            raise SourceUnavailableError(f"blocked ({response.status_code})", blocked=True, retry_after=retry_after)
+        if response.status_code != 200:
+            raise SourceUnavailableError(f"status {response.status_code}")
+        return parse_details(response.text)
 
     async def _fetch_page(
         self, keywords: str, location: str, window_seconds: int, *, start: int

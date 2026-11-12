@@ -72,3 +72,16 @@ def test_startup_error_lists_names_but_never_values(monkeypatch: pytest.MonkeyPa
     assert "EMAIL_TO" in message
     assert "re_super_secret_123" not in message
     assert "not an email" not in message
+
+
+def test_assessment_needs_key_and_resume_together() -> None:
+    assert not make_settings().assessment_enabled
+    assert make_settings(llm_api_key="gsk_x", resume_file="curriculo.yaml").assessment_enabled
+    with pytest.raises(ValidationError, match="needs both LLM_API_KEY and RESUME_FILE"):
+        make_settings(llm_api_key="gsk_x")
+
+
+def test_llm_url_must_be_https_except_on_this_machine() -> None:
+    assert make_settings(llm_api_url="http://localhost:11434/v1").llm_api_url == "http://localhost:11434/v1"
+    with pytest.raises(ValidationError, match="must start with https"):
+        make_settings(llm_api_url="http://api.example.com/v1")

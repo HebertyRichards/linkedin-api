@@ -35,6 +35,10 @@ every ~30 min (±20%)
 - **"Delivered" means the provider accepted the message** (a 2xx from Resend or Evolution). If the primary
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
+- **With `LLM_API_KEY` and `RESUME_FILE`, each new job gets a score (0-100)** against your resume, with the
+  reason and what is missing, and the best scores go first. The AI (Groq's free tier by default) reads the
+  job page and the resume without the contact block. On-site jobs are dropped. When the AI is down or the free
+  quota is used up, the job still goes out, without a score.
 - **If the job source fails for 1 hour in a row,** you get one "source failing" alert. It is not
   repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
   recognizes (LinkedIn changed the markup or answered with a challenge page).
@@ -61,6 +65,10 @@ error names the missing variables and never prints their values.
 | `WHATSAPP_TO` | WhatsApp | — | Your number with country and area code (`5511999999999`) or a group id (`...@g.us`) |
 | `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first when both are set |
 | `POLL_INTERVAL_SECONDS` | no | `1800` | Seconds between cycles, minimum 60 |
+| `LLM_API_KEY` | no | — | Turns on job scoring. Free key at console.groq.com |
+| `RESUME_FILE` | with `LLM_API_KEY` | — | Path of the resume YAML (git-ignored) |
+| `LLM_API_URL` | no | `https://api.groq.com/openai/v1` | Any OpenAI-compatible API |
+| `LLM_MODEL` | no | `openai/gpt-oss-20b` | Model used for the score |
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |
 | `LOG_LEVEL` | no | `INFO` | |
 | `APP_ENV` | no | `development` | `production` switches the logs to JSON |

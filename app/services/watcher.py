@@ -6,7 +6,8 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
 from app.errors import SourceUnavailableError
-from app.schemas.job import Job
+from app.schemas.job import Assessment, Job
+from app.services.assessor import Assessor
 from app.services.dispatcher import Dispatcher
 from app.services.messages import MAX_PER_MESSAGE, batches, job_message, source_down_message
 from app.sources.base import JobSource
@@ -44,8 +45,10 @@ class Watcher:
         interval_seconds: int,
         search_spacing: tuple[float, float] = (2.0, 5.0),
         clock: Callable[[], datetime] = _utc_now,
+        assessor: Assessor | None = None,
     ) -> None:
         self._source = source
+        self._assessor = assessor
         self._dispatcher = dispatcher
         self._store = store
         self._searches = list(searches)
@@ -116,9 +119,9 @@ class Watcher:
             for job in jobs:
                 if not self._store.is_seen(job.key):
                     pending.setdefault(job.key, job)
-        picked = list(pending.values())[:MAX_PER_MESSAGE]
+        picked, scores = await self._assess(list(pending.values())[:MAX_PER_MESSAGE], now)
         if picked:
-            message = job_message(picked)
+            message = job_message(picked, scores)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 return  # left unmarked and still due: the next loop tries again
@@ -146,9 +149,42 @@ class Watcher:
             answered.append((keywords, jobs))
         return answered
 
+    async def _assess(self, jobs: list[Job], now: datetime) -> tuple[list[Job], dict[str, Assessment]]:
+        """Scores each job, best first. On-site jobs are dropped and marked as seen: they never go out.
+
+        A job that cannot be scored (job page or LLM down, quota used up) still goes out, without a score.
+        """
+        if self._assessor is None:
+            return jobs, {}
+        scores: dict[str, Assessment] = {}
+        fetched = 0
+        for job in jobs:
+            assessment = self._assessor.cached(job)
+            if assessment is None:
+                if fetched:
+                    await asyncio.sleep(random.uniform(*self._search_spacing))  # noqa: S311
+                fetched += 1
+                try:
+                    details = await self._source.fetch_details(job)
+                except SourceUnavailableError as e:
+                    logger.warning("Job page of %s unavailable: %s", job.key, e)
+                    continue
+                assessment = await self._assessor.assess(job, details)
+            if assessment is not None:
+                scores[job.key] = assessment
+        onsite = {key for key, assessment in scores.items() if assessment.workplace == "onsite"}
+        if onsite:
+            self._store.mark(onsite, now)
+            await self._store.save()
+            logger.info("Dropped %d on-site job(s)", len(onsite))
+        kept = [job for job in jobs if job.key not in onsite]
+        kept.sort(key=lambda job: scores[job.key].score if job.key in scores else -1, reverse=True)
+        return kept, scores
+
     async def _notify(self, jobs: list[Job], now: datetime) -> None:
+        jobs, scores = await self._assess(jobs, now)
         for group in batches(jobs):
-            message = job_message(group)
+            message = job_message(group, scores)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 # Left unmarked on purpose: the next cycle tries these jobs again.

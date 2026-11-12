@@ -31,10 +31,12 @@ app/
   main.py                  # boot, signal handling, wiring
   config/                  # settings (env validation), logging
   errors.py                # SourceUnavailableError, RetryableError, Channel*Error
-  schemas/job.py           # Job: the boundary for source data
+  schemas/job.py           # Job, JobDetails, Assessment: the boundary for source and LLM data
+  schemas/resume.py        # resume YAML without the contact block (the only part an LLM sees)
   sources/                 # JobSource protocol + linkedin_guest (parser of the public search page)
   channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution)
-  services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text)
+  services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
+                           # assessor (job score by an OpenAI-compatible LLM)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
   utils/                   # circuit_breaker, retry, mask
 tests/

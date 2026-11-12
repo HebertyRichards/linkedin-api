@@ -2,8 +2,8 @@ import httpx
 import pytest
 
 from app.errors import SourceUnavailableError
-from app.sources.linkedin_guest import LinkedInGuestSource, parse_cards
-from tests.helpers import card
+from app.sources.linkedin_guest import LinkedInGuestSource, parse_cards, parse_details
+from tests.helpers import card, job
 
 
 def test_parse_cards_reads_fields_and_skips_invalid_cards() -> None:
@@ -75,5 +75,65 @@ async def test_page_without_a_usable_card_is_a_failure(body: str) -> None:
             with pytest.raises(SourceUnavailableError, match="markup changed"):
                 await source.fetch_recent("python", "Brazil", window_seconds=3600)
         # Three failures open the circuit, so a broken page is not requested every cycle.
+        with pytest.raises(SourceUnavailableError, match="circuit open"):
+            await source.fetch_recent("python", "Brazil", window_seconds=3600)
+
+
+# The job page markup observed on 2026-11-12 (trimmed): nested divs inside the description.
+JOB_PAGE = """
+<div class="description__text description__text--rich">
+  <section class="show-more-less-html" data-max-lines="5">
+    <div class="show-more-less-html__markup show-more-less-html__markup--clamp-after-5
+        relative overflow-hidden">
+      We are hiring a <strong>Python</strong> developer.<br><br>
+      <div><p>Requirements</p><ul><li>FastAPI</li><li>English B2</li></ul></div>
+      After the nested block.
+    </div>
+  </section>
+</div>
+<ul class="description__job-criteria-list">
+  <li class="description__job-criteria-item">
+    <h3 class="description__job-criteria-subheader">
+      Seniority level
+    </h3>
+    <span class="description__job-criteria-text description__job-criteria-text--criteria">
+      Entry level
+    </span>
+  </li>
+  <li class="description__job-criteria-item">
+    <h3 class="description__job-criteria-subheader">Employment type</h3>
+    <span class="description__job-criteria-text description__job-criteria-text--criteria">Full-time</span>
+  </li>
+  <li class="description__job-criteria-item">
+    <h3 class="description__job-criteria-subheader">Industries</h3>
+    <span class="description__job-criteria-text description__job-criteria-text--criteria">Software</span>
+  </li>
+</ul>
+<button class="show-more-less-html__button">Show more</button>
+"""
+
+
+def test_job_page_gives_description_and_criteria() -> None:
+    details = parse_details(JOB_PAGE)
+    assert details.description == (
+        "We are hiring a Python developer. Requirements FastAPI English B2 After the nested block."
+    )
+    assert (details.seniority, details.employment_type) == ("Entry level", "Full-time")
+
+
+def test_job_page_without_description_is_a_failure() -> None:
+    with pytest.raises(SourceUnavailableError, match="without a description"):
+        parse_details("<html><body><h1>Let's do a quick security check</h1></body></html>")
+
+
+async def test_job_page_block_opens_the_circuit_for_the_search_too() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "120"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        source = LinkedInGuestSource(client, page_delay=0)
+        with pytest.raises(SourceUnavailableError) as blocked:
+            await source.fetch_details(job(1))
+        assert blocked.value.blocked
         with pytest.raises(SourceUnavailableError, match="circuit open"):
             await source.fetch_recent("python", "Brazil", window_seconds=3600)

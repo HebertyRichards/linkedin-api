@@ -28,6 +28,8 @@ pydantic-settings==2.16.1
     # via -r requirements.in
 python-dotenv==1.2.4
     # via pydantic-settings
+pyyaml==6.0.3
+    # via -r requirements.in
 typing-extensions==4.16.0
     # via
     #   anyio

@@ -45,7 +45,13 @@ class Settings(BaseSettings):
 
     notify_primary: Channel = Field(default="whatsapp")
 
-    @field_validator("resend_api_key", "evolution_api_key", mode="before")
+    # Job assessment by an LLM with an OpenAI-compatible API (Groq by default). Off without a key.
+    llm_api_url: str = Field(default="https://api.groq.com/openai/v1")
+    llm_api_key: SecretStr = Field(default=SecretStr(""))
+    llm_model: str = Field(default="openai/gpt-oss-20b")
+    resume_file: str = Field(default="")
+
+    @field_validator("resend_api_key", "evolution_api_key", "llm_api_key", mode="before")
     @classmethod
     def _strip_secret(cls, v: object) -> object:
         # Values pasted from a dashboard often carry a stray space or newline.
@@ -67,9 +73,9 @@ class Settings(BaseSettings):
             raise ValueError("must be an email address")
         return v
 
-    @field_validator("evolution_api_url")
+    @field_validator("evolution_api_url", "llm_api_url")
     @classmethod
-    def _evolution_url(cls, v: str) -> str:
+    def _service_url(cls, v: str) -> str:
         v = v.strip().rstrip("/")
         if not v:
             return v
@@ -102,6 +108,8 @@ class Settings(BaseSettings):
                 "WHATSAPP_TO": self.whatsapp_to,
             },
         }
+        if bool(self.llm_api_key.get_secret_value()) != bool(self.resume_file):
+            raise ValueError("job assessment needs both LLM_API_KEY and RESUME_FILE, or neither")
         for channel, fields in required.items():
             missing = [name for name, value in fields.items() if not value]
             if missing and len(missing) < len(fields):
@@ -126,6 +134,10 @@ class Settings(BaseSettings):
         if self.evolution_api_url and self.evolution_api_key.get_secret_value() and self.whatsapp_to:
             configured.append("whatsapp")
         return sorted(configured, key=lambda name: name != self.notify_primary)
+
+    @property
+    def assessment_enabled(self) -> bool:
+        return bool(self.llm_api_key.get_secret_value() and self.resume_file)
 
     @property
     def is_production(self) -> bool:

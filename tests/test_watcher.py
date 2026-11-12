@@ -7,7 +7,7 @@ import pytest
 from app.errors import ChannelUnavailableError, SourceUnavailableError
 from app.services.messages import job_message
 from app.state.seen_store import SeenStore
-from tests.helpers import Clock, FakeNotifier, FakeSource, job, make_watcher
+from tests.helpers import Clock, FakeAssessor, FakeNotifier, FakeSource, assessment, job, make_watcher
 
 
 async def test_first_cycle_is_a_baseline_then_only_new_jobs_go_out() -> None:
@@ -196,3 +196,67 @@ def test_message_is_stable_escaped_and_links_by_id() -> None:
     assert (first.text, first.idempotency_key) == (again.text, again.idempotency_key)
     assert "<script>" not in first.html
     assert risky.url in first.text
+
+
+async def test_scored_jobs_go_out_best_first_and_on_site_ones_never() -> None:
+    email = FakeNotifier("email")
+    store = SeenStore(None)
+    scores = {job(1).key: assessment(55), job(2).key: assessment(90, "onsite"), job(3).key: assessment(82)}
+    # job(4) has no score (LLM down or quota used up): it still goes out, last.
+    watcher = make_watcher(
+        FakeSource([[], [job(n) for n in range(1, 5)]]), [email], store=store, assessor=FakeAssessor(scores)
+    )
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    # Up to 3 jobs go out one message each, the best score first.
+    assert [message.keys for message in email.sent] == [(job(3).key,), (job(1).key,), (job(4).key,)]
+    assert email.sent[0].subject.startswith("Nova vaga Easy Apply (82/100)")
+    assert "Nota 82/100: Stack parecida." in email.sent[0].text
+    assert "Falta: Kubernetes" in email.sent[0].text
+    assert store.is_seen(job(2).key)
+
+
+async def test_job_page_down_still_sends_the_job_without_a_score() -> None:
+    email = FakeNotifier("email")
+    source = FakeSource([[], [job(1)]], details=SourceUnavailableError("status 500"))
+    watcher = make_watcher(source, [email], assessor=FakeAssessor({job(1).key: assessment(80)}))
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert [message.keys for message in email.sent] == [(job(1).key,)]
+    assert "Nota" not in email.sent[0].text
+
+
+async def test_a_job_already_scored_skips_its_job_page() -> None:
+    source = FakeSource([[], [job(1)]])
+    watcher = make_watcher(
+        source, [FakeNotifier("email")], assessor=FakeAssessor({}, cache={job(1).key: assessment(70)})
+    )
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert source.detail_calls == []
+
+
+async def test_digest_scores_its_jobs_too() -> None:
+    email = FakeNotifier("email")
+    watcher = make_watcher(
+        FakeSource([[job(1), job(2)]]),
+        [email],
+        assessor=FakeAssessor({job(1).key: assessment(40), job(2).key: assessment(75)}),
+    )
+
+    await watcher.digest_if_due()
+
+    assert [message.keys for message in email.sent] == [(job(2).key, job(1).key)]
+
+
+def test_new_score_for_the_same_jobs_is_a_new_message_key() -> None:
+    first = job_message([job(1)], {job(1).key: assessment(60)})
+    rescored = job_message([job(1)], {job(1).key: assessment(70)})
+    assert first.idempotency_key != rescored.idempotency_key
+    assert first.idempotency_key == job_message([job(1)], {job(1).key: assessment(60)}).idempotency_key

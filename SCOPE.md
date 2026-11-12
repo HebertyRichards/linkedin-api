@@ -173,6 +173,33 @@ fora: para um worker de uma réplica, não traz nada que o arquivo não traga.
 O arquivo guarda **só `source:jobId` e a data**. Não guarda título, empresa nem recrutador
 (LGPD, art. 7º: guardar o mínimo).
 
+### D4. Nota da vaga por IA (2026-11-12)
+
+Cada vaga nova recebe uma nota de 0 a 100 contra o currículo, com o motivo e o que falta. Vaga presencial é
+descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e AGENTS.md, regra 7).
+
+| Opção | Custo | Dados pessoais | Decisão |
+|---|---|---|---|
+| **Groq, plano grátis** (`gpt-oss-20b`) | zero; ~200 mil tokens/dia por modelo | não guarda por padrão (logs até 30 dias) | **escolhida** |
+| Claude Haiku (API) | ~US$ 1,50/mês | termos comerciais | fora: orçamento zero |
+| Gemini grátis | zero | os termos proíbem enviar dado pessoal no plano grátis | fora |
+| OpenRouter `:free` | zero; 50 pedidos/dia | depende do provedor | reserva |
+
+- **Uma classe só** para qualquer API no formato OpenAI: trocar de provedor é trocar `LLM_API_URL`,
+  `LLM_MODEL` e `LLM_API_KEY`.
+- **O currículo vem de um YAML** (`RESUME_FILE`, fora do Git e da imagem). O bloco `contato` nunca é lido
+  pelo código que monta o prompt.
+- **A resposta da IA é dado não confiável:** JSON com schema estrito no pedido e validação no
+  `schemas/job.py`, com limite de tamanho, igual ao dado da fonte.
+- **Falha segura para o alerta:** IA fora, cota esgotada (429 abre o breaker pelo `Retry-After`) ou página
+  da vaga indisponível: a vaga vai sem nota, nunca fica presa.
+- **Observado (2026-11-12):** o filtro `f_WT` (presencial/remoto) não tem efeito no `jobs-guest`, e a página
+  da vaga não traz o modelo de trabalho num campo próprio. Por isso quem classifica é a IA, lendo a descrição.
+- **Descrição cortada em 6.000 caracteres** (~1.500 tokens): cabe na cota por minuto sem perder os
+  requisitos, que costumam vir no fim.
+- A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
+  gasta cota nem refaz a página.
+
 ---
 
 ## 3. Como funciona
@@ -237,6 +264,7 @@ event loop.
 | Fonte de vagas | 3 falhas seguidas | 5 min, dobrando a cada nova abertura, até 60 min | 429 ou 999 (bloqueio no `jobs-guest` [I]) abre na hora; usa o `Retry-After` quando ele vier |
 | Resend | 5 falhas | 60 s | |
 | Evolution | 5 falhas | 30 s | mesmos valores do whatsapp-automation |
+| IA (Groq) | 3 falhas | 60 s, dobrando até 60 min | 429 com `Retry-After` longo (cota) abre na hora pelo tempo informado |
 
 ### Retry
 - **Por canal:** até 3 tentativas, backoff exponencial com jitter. Só em erro de rede, 429 ou 5xx,
