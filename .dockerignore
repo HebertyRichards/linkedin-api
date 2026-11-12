@@ -28,3 +28,5 @@ Makefile
 Dockerfile
 .dockerignore
 .pre-commit-config.yaml
+
+curriculo*.yaml

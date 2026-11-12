@@ -23,3 +23,6 @@ seen.json
 Thumbs.db
 
 *.log
+
+# Resume: personal data, never committed nor baked into the image.
+curriculo*.yaml
