@@ -125,6 +125,7 @@ def test_llm_output_is_bounded() -> None:
         {"score": 50, "workplace": "unknown", "reasons": "x " * 500, "gaps": [f"gap {n}" for n in range(9)]}
     )
     assert len(long.reasons) <= 200
+    assert long.reasons.endswith("x…")  # cut between words, never inside one
     assert len(long.gaps) == 5
 
 
