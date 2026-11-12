@@ -201,6 +201,22 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
 - A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
   gasta cota nem refaz a página.
 
+**Fase 3: currículo ajustado (2026-11-12).** Nota 80 ou mais, fora presencial: o email leva o currículo
+ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe só o texto).
+
+- **A IA escolhe, o código monta:** ela devolve ids de destaques, um projeto e as habilidades, e reescreve
+  o resumo. Empresa, cargo, datas e formação vêm sempre do YAML. Id que não existe é ignorado; habilidade
+  fora do currículo cai; `habilidades_sob_demanda` (ex.: Railway, Vercel) só entra se a vaga citar.
+- **Resumo com falha segura:** se citar termo técnico que o currículo não tem, ou um nível (júnior, pleno,
+  sênior), volta o resumo original. Modelo de trabalho e salário nunca entram no currículo.
+- **Projeto fixo** (`fixo: true`) entra sempre; a IA escolhe mais um.
+- **Modelo maior para isso** (`LLM_TAILOR_MODEL`, padrão `gpt-oss-120b`): a Groq limita cada modelo à
+  parte, então ajustar currículo não gasta a cota da nota. São poucas vagas por dia.
+- **PDF com fpdf2**, uma coluna e fonte embutida (leitura boa em ATS). WeasyPrint foi descartado: precisa
+  de Pango/GTK no sistema, não roda no Windows sem instalar isso e engorda a imagem. O custo do fpdf2: a
+  fonte embutida só tem Latin-1, então travessão, reticências e aspas curvas viram ASCII.
+- O PDF tem data de criação fixa: o mesmo currículo dá os mesmos bytes e a mesma chave de idempotência.
+
 ---
 
 ## 3. Como funciona

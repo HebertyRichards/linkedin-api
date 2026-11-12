@@ -9,6 +9,7 @@ import pytest
 
 from app.schemas.resume import Resume, load_resume, parse_resume
 from app.services.assessor import JobAssessor
+from app.services.llm import ChatClient
 from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -32,7 +33,8 @@ def resume(tmp_path: Path) -> Resume:
 
 def assessor_for(handler: Handler, resume: Resume) -> tuple[JobAssessor, httpx.AsyncClient]:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    assessor = JobAssessor(client, make_settings(**LLM), resume, retry_base_delay=0, today=lambda: date(2026, 11, 12))
+    chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-20b", retry_base_delay=0)
+    assessor = JobAssessor(chat, resume, today=lambda: date(2026, 11, 12))
     return assessor, client
 
 
@@ -147,3 +149,23 @@ def test_broken_resume_names_the_problem_not_the_content(tmp_path: Path, caplog:
 def test_resume_from_a_variable_matches_the_file(tmp_path: Path, resume: Resume) -> None:
     # RESUME_YAML on Railway holds the same text as the local file.
     assert parse_resume(RESUME_YAML) == resume
+
+
+async def test_per_minute_limit_is_waited_out_not_taken_for_the_daily_quota(
+    resume: Resume, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Groq's token-per-minute window answers 429 with a Retry-After of up to ~60 s (seen live: 1 to 59 s).
+    waits: list[float] = []
+
+    async def no_sleep(delay: float) -> None:
+        waits.append(delay)
+
+    monkeypatch.setattr("app.utils.retry.asyncio.sleep", no_sleep)
+    answers = iter([httpx.Response(429, headers={"retry-after": "45"}), reply(GOOD), reply(GOOD)])
+    assessor, client = assessor_for(lambda _: next(answers), resume)
+    async with client:
+        first = await assessor.assess(job(1), DETAILS)
+        second = await assessor.assess(job(2), DETAILS)
+
+    assert first is not None and second is not None  # the rest of the batch is still scored
+    assert waits == [45.0]

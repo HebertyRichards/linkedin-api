@@ -1,0 +1,131 @@
+import json
+from datetime import date
+
+import httpx
+import pytest
+
+from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
+from app.services.llm import ChatClient
+from app.services.resume_pdf import render_pdf
+from app.services.tailor import ResumeTailor, TailorChoice, _filename, build_tailored, safe_summary
+from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
+
+TODAY = date(2026, 11, 12)
+LLM = {"llm_api_key": "gsk_test_key", "resume_file": "curriculo.yaml"}
+
+
+@pytest.fixture
+def resume() -> Resume:
+    return parse_resume(RESUME_YAML)
+
+
+@pytest.fixture
+def contact() -> Contact:
+    return parse_contact(RESUME_YAML)
+
+
+def choice(**overrides: object) -> TailorChoice:
+    values: dict[str, object] = {
+        "resumo": "Engenheira de dados com Go e Kafka.",
+        "destaques": ["padaria-fila"],
+        "projeto": "horta",
+        "habilidades": ["Kafka"],
+        **overrides,
+    }
+    return TailorChoice.model_validate(values)
+
+
+def tailored(resume: Resume, description: str = "Vaga com Go.", **overrides: object) -> TailoredResume:
+    return build_tailored(resume, choice(**overrides), description, resume.prompt_text(TODAY))
+
+
+def test_chosen_highlights_come_first_and_unknown_ids_are_ignored(resume: Resume) -> None:
+    result = tailored(resume, destaques=["inventado", "padaria-fila"])
+
+    assert [item.id for item in result.experiencias[0].destaques] == ["padaria-fila", "padaria-etl"]
+    # Companies, roles and dates come from the base, never from the LLM.
+    assert result.experiencias[0].empresa == "Padaria Modelo"
+
+
+def test_the_fixed_project_stays_and_one_more_is_picked(resume: Resume) -> None:
+    assert [p.id for p in tailored(resume).projetos] == ["clima", "horta"]
+    # An id that does not exist falls back to the first project that can be chosen.
+    assert [p.id for p in tailored(resume, projeto="nao-existe").projetos] == ["clima", "feira"]
+
+
+def test_skills_are_only_the_resume_ones_and_on_demand_only_when_the_job_names_them(resume: Resume) -> None:
+    plain = tailored(resume, habilidades=["Kafka", "Kubernetes"])
+    assert plain.habilidades == ["Kafka", "Go", "Rust"]
+
+    asked = tailored(resume, description="Usamos Airflow e Go.", habilidades=["airflow"])
+    assert asked.habilidades == ["Airflow", "Go", "Kafka", "Rust"]
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "Engenheira de dados com Go e Kubernetes.",  # a technology the resume does not have
+        "Engenheira de dados pleno com Go.",  # a seniority level
+        "",
+        "x" * 700,
+    ],
+)
+def test_a_summary_that_is_not_safe_falls_back_to_the_base_one(resume: Resume, candidate: str) -> None:
+    assert safe_summary(candidate, resume, resume.prompt_text(TODAY)) == resume.resumo
+
+
+def test_a_safe_summary_is_kept(resume: Resume) -> None:
+    candidate = "Engenheira de dados  com Go e Kafka."
+    assert safe_summary(candidate, resume, resume.prompt_text(TODAY)) == "Engenheira de dados com Go e Kafka."
+
+
+def test_filename_is_plain_ascii() -> None:
+    assert (
+        _filename(job(1).model_copy(update={"company": "Café & Cia / São Paulo"})) == "Curriculo-Cafe-Cia-Sao-Paulo.pdf"
+    )
+    assert _filename(job(1).model_copy(update={"company": "!!!"})) == "Curriculo-vaga.pdf"
+
+
+def test_pdf_renders_llm_punctuation_and_is_the_same_every_time(resume: Resume, contact: Contact) -> None:
+    result = tailored(resume).model_copy(update={"resumo": "Dados — pipelines… “rápidos” • ok"})
+
+    first = render_pdf(contact, resume.titulo, result, resume.formacao, resume.idiomas)
+    again = render_pdf(contact, resume.titulo, result, resume.formacao, resume.idiomas)
+
+    assert first.startswith(b"%PDF")
+    assert first == again
+
+
+async def test_tailor_builds_the_pdf_once_and_never_sends_contact_data(resume: Resume, contact: Contact) -> None:
+    prompts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompts.append(json.loads(request.content)["messages"][1]["content"])
+        content = choice().model_dump_json()
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        tailor = ResumeTailor(chat, resume, contact, today=lambda: TODAY)
+        first = await tailor.tailor(job(1), DETAILS)
+        again = await tailor.tailor(job(1), DETAILS)
+
+    assert first is not None
+    assert first == again == tailor.cached(job(1))
+    assert len(prompts) == 1
+    assert first.attachment.filename == "Curriculo-Acme.pdf"
+    assert first.attachment.content.startswith(b"%PDF")
+    assert "Buscamos pessoa de dados com Go." in prompts[0]
+    for private in ("Ana Exemplo", "00000-0000", "ana@example.com"):
+        assert private not in prompts[0]
+
+
+async def test_an_unusable_reply_gives_no_file(resume: Resume, contact: Contact) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"resumo": 1}'}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
+
+    assert result is None

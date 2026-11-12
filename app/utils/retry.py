@@ -14,16 +14,18 @@ def parse_retry_after(value: str | None) -> float | None:
     return None
 
 
-def backoff(attempt: int, base: float, retry_after: float | None = None) -> float:
+def backoff(attempt: int, base: float, retry_after: float | None = None, max_delay: float = MAX_DELAY_SECONDS) -> float:
     """Delay before retry `attempt` (1-based): exponential with jitter, Retry-After wins when longer."""
-    ceiling = min(MAX_DELAY_SECONDS, base * 2.0 ** (attempt - 1))
+    ceiling = min(max_delay, base * 2.0 ** (attempt - 1))
     delay = ceiling / 2 + random.uniform(0, ceiling / 2)  # noqa: S311 - jitter, not security
     if retry_after is not None:
-        delay = max(delay, min(retry_after, MAX_DELAY_SECONDS))
+        delay = max(delay, min(retry_after, max_delay))
     return delay
 
 
-async def retrying[T](call: Callable[[], Awaitable[T]], *, attempts: int, base_delay: float) -> T:
+async def retrying[T](
+    call: Callable[[], Awaitable[T]], *, attempts: int, base_delay: float, max_delay: float = MAX_DELAY_SECONDS
+) -> T:
     """Runs `call` up to `attempts` times while it raises RetryableError. The last one propagates."""
     attempt = 1
     while True:
@@ -32,5 +34,5 @@ async def retrying[T](call: Callable[[], Awaitable[T]], *, attempts: int, base_d
         except RetryableError as e:
             if attempt >= attempts:
                 raise
-            await asyncio.sleep(backoff(attempt, base_delay, e.retry_after))
+            await asyncio.sleep(backoff(attempt, base_delay, e.retry_after, max_delay))
             attempt += 1

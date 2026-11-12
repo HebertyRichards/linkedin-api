@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 from collections.abc import Callable
@@ -9,7 +10,8 @@ from app.channels.email import EmailNotifier
 from app.channels.whatsapp import WhatsAppNotifier
 from app.errors import ChannelRejectedError, ChannelUnavailableError
 from app.services.messages import job_message
-from tests.helpers import WHATSAPP, job, make_settings
+from app.services.tailor import TailoredFile
+from tests.helpers import DETAILS, WHATSAPP, FakeTailor, job, make_settings
 
 Handler = Callable[[httpx.Request], httpx.Response]
 MESSAGE = job_message([job(1)])
@@ -37,6 +39,28 @@ async def test_email_sends_the_key_only_in_the_header_and_never_logs_it(caplog: 
     assert "re_test_key" not in str(request.url)
     assert "re_test_key" not in caplog.text
     assert "me@example.com" not in caplog.text
+
+
+async def test_email_attaches_the_tailored_resume_only_when_there_is_one() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "email-1"})
+
+    resume = await FakeTailor().tailor(job(1), DETAILS)
+    assert isinstance(resume, TailoredFile)
+    with_file = job_message([job(1)], tailored={job(1).key: resume})
+    async with client_for(handler) as client:
+        notifier = EmailNotifier(client, make_settings(), retry_base_delay=0)
+        await notifier.send(with_file)
+        await notifier.send(MESSAGE)
+
+    assert bodies[0]["attachments"] == [
+        {"filename": "Curriculo-4400000001.pdf", "content": base64.b64encode(b"%PDF-fake").decode()}
+    ]
+    assert "attachments" not in bodies[1]
+    assert with_file.idempotency_key != MESSAGE.idempotency_key
 
 
 async def test_email_retries_a_server_error_with_the_same_idempotency_key() -> None:

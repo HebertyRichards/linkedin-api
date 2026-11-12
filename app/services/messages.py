@@ -4,7 +4,8 @@ from datetime import datetime
 from html import escape
 
 from app.channels.base import Message
-from app.schemas.job import Assessment, Job
+from app.schemas.job import Assessment, Job, clip
+from app.services.tailor import TailoredFile
 
 # Up to this many new jobs in one cycle go out one message each; more than that are grouped.
 SINGLE_LIMIT = 3
@@ -30,9 +31,56 @@ def _score_lines(assessment: Assessment | None) -> list[str]:
     return lines
 
 
-def job_message(jobs: Sequence[Job], assessments: Mapping[str, Assessment] | None = None) -> Message:
-    """No clock in the text: a repeat of the same jobs and scores gives the same body and key."""
+def _resume_lines(tailored: TailoredFile | None) -> list[str]:
+    """A preview of what the tailored resume leads with; the full one is the attached PDF."""
+    if tailored is None:
+        return []
+    resume = tailored.resume
+    top = [item.texto for job in resume.experiencias for item in job.destaques][:3]
+    return [
+        f"Currículo ajustado em anexo: {tailored.attachment.filename}",
+        f"Resumo: {clip(resume.resumo, 220)}",
+        "Destaques: " + "; ".join(clip(text, 90) for text in top),
+        "Projetos: " + " + ".join(project.nome for project in resume.projetos),
+    ]
+
+
+# Inline styles only: Gmail and Outlook drop <style> blocks and external CSS.
+_CARD = "border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;margin:0 0 12px;font-family:Arial,sans-serif"
+_PREVIEW = "background:#f6f8fa;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px"
+_BUTTON = (
+    "display:inline-block;margin-top:10px;padding:6px 12px;background:#1a4d8f;color:#ffffff;"
+    "border-radius:6px;text-decoration:none"
+)
+
+
+def _card(job: Job, assessment: Assessment | None, tailored: TailoredFile | None) -> str:
+    score = f'<div style="font-size:13px;color:#1a4d8f"><b>{assessment.score}/100</b></div>' if assessment else ""
+    lines = "".join(f'<div style="margin-top:4px">{escape(line)}</div>' for line in _score_lines(assessment))
+    preview = _resume_lines(tailored)
+    resume = (
+        f'<div style="{_PREVIEW}"><b>{escape(preview[0])}</b>'
+        + "".join(f"<br>{escape(line)}" for line in preview[1:])
+        + "</div>"
+        if preview
+        else ""
+    )
+    return (
+        f'<div style="{_CARD}">{score}'
+        f'<a href="{job.url}" style="font-size:16px;font-weight:bold;color:#1f2328">{escape(job.title)}</a>'
+        f'<div style="color:#57606a">{escape(_details(job))}</div>{lines}{resume}'
+        f'<a href="{job.url}" style="{_BUTTON}">Ver vaga e se candidatar</a></div>'
+    )
+
+
+def job_message(
+    jobs: Sequence[Job],
+    assessments: Mapping[str, Assessment] | None = None,
+    tailored: Mapping[str, TailoredFile] | None = None,
+) -> Message:
+    """No clock in the text: a repeat of the same jobs, scores and files gives the same body and key."""
     scores = assessments or {}
+    files = tailored or {}
     keys = tuple(job.key for job in jobs)
 
     if len(jobs) == 1:
@@ -46,25 +94,32 @@ def job_message(jobs: Sequence[Job], assessments: Mapping[str, Assessment] | Non
 
     text_items = [
         "\n".join(
-            line for line in (f"*{job.title}*", _details(job), *_score_lines(scores.get(job.key)), job.url) if line
+            line
+            for line in (
+                f"*{job.title}*",
+                _details(job),
+                *_score_lines(scores.get(job.key)),
+                *_resume_lines(files.get(job.key)),
+                job.url,
+            )
+            if line
         )
         for job in jobs
     ]
-    html_items = [
-        f'<li><a href="{job.url}">{escape(job.title)}</a><br>{escape(_details(job))}'
-        + "".join(f"<br>{escape(line)}" for line in _score_lines(scores.get(job.key)))
-        + "</li>"
-        for job in jobs
-    ]
     text = f"*{heading}*\n\n" + "\n\n".join(text_items)
-    # The body is part of the key: a new score for the same jobs is a new message, never a 409 from Resend.
-    digest = hashlib.sha256((",".join(sorted(keys)) + text).encode()).hexdigest()[:32]
+    attachments = tuple(files[job.key].attachment for job in jobs if job.key in files)
+    # Body and files are part of the key: a new score for the same jobs is a new message, never a 409 from Resend.
+    fingerprint = hashlib.sha256((",".join(sorted(keys)) + text).encode())
+    for attachment in attachments:
+        fingerprint.update(attachment.content)
     return Message(
         subject=subject,
         text=text,
-        html=f"<h2>{heading}</h2><ul>{''.join(html_items)}</ul>",
-        idempotency_key=f"jobs-{digest}",
+        html=f'<h2 style="font-family:Arial,sans-serif">{heading}</h2>'
+        + "".join(_card(job, scores.get(job.key), files.get(job.key)) for job in jobs),
+        idempotency_key=f"jobs-{fingerprint.hexdigest()[:32]}",
         keys=keys,
+        attachments=attachments,
     )
 
 

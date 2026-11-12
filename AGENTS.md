@@ -37,7 +37,8 @@ app/
   sources/                 # JobSource protocol + linkedin_guest (parser of the public search page)
   channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution)
   services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
-                           # assessor (job score by an OpenAI-compatible LLM)
+                           # llm (chat client, one breaker per model), assessor (job score),
+                           # tailor (resume for jobs scored 80+), resume_pdf (fpdf2 render)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
   utils/                   # circuit_breaker, retry, mask
 tests/

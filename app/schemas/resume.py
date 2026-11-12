@@ -83,18 +83,55 @@ class Resume(_Model):
         return "\n".join(lines)
 
 
-def load_resume(path: Path) -> Resume:
+class Contact(_Model):
+    """Printed on the PDF only. Kept apart from Resume so no prompt can include it."""
+
+    nome: str
+    telefone: str = ""
+    email: str = ""
+    linkedin: str = ""
+    github: str = ""
+    portfolio: str = ""
+    cidade: str = ""
+
+
+class _ContactBlock(_Model):
+    contato: Contact
+
+
+class TailoredResume(_Model):
+    """The resume for one job, assembled by code from the base: only the order, the pick and the summary change.
+    Companies, roles, dates and education always come from the base, never from the LLM."""
+
+    resumo: str
+    experiencias: list[Experience]
+    projetos: list[Project]
+    habilidades: list[str]
+
+
+def read_resume_file(path: Path) -> str:
     try:
-        text = path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8")
     except OSError as e:
         raise RuntimeError(f"RESUME_FILE could not be read: {type(e).__name__}") from None
-    return parse_resume(text)
+
+
+def load_resume(path: Path) -> Resume:
+    return parse_resume(read_resume_file(path))
 
 
 def parse_resume(text: str) -> Resume:
     """Read once at boot. Errors name the problem, never the content (it is personal data)."""
+    return _parse(Resume, text)
+
+
+def parse_contact(text: str) -> Contact:
+    return _parse(_ContactBlock, text).contato
+
+
+def _parse[M: _Model](model: type[M], text: str) -> M:
     try:
-        return Resume.model_validate(yaml.safe_load(text))
+        return model.model_validate(yaml.safe_load(text))
     except yaml.YAMLError:
         raise RuntimeError("the resume is not valid YAML") from None
     except ValidationError as e:

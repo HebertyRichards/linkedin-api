@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     llm_api_url: str = Field(default="https://api.groq.com/openai/v1")
     llm_api_key: SecretStr = Field(default=SecretStr(""))
     llm_model: str = Field(default="openai/gpt-oss-20b")
+    # The tailored resume (score >= 80) uses another model: Groq counts the free quota per model.
+    llm_tailor_model: str = Field(default="openai/gpt-oss-120b")
     # The resume: a file path (local) or the YAML itself (Railway, where the git-ignored file does not exist).
     resume_file: str = Field(default="")
     resume_yaml: SecretStr = Field(default=SecretStr(""))

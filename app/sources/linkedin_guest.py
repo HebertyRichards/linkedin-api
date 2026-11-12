@@ -189,9 +189,9 @@ class LinkedInGuestSource:
 
     async def fetch_details(self, job: Job) -> JobDetails:
         """One job page. Only a block answer touches the breaker: a page that fails to parse must not
-        stop the search itself."""
+        stop the search itself. An open circuit counts as a block, so the caller holds the job."""
         if not self._breaker.allow():
-            raise SourceUnavailableError("circuit open")
+            raise SourceUnavailableError("circuit open", blocked=True)
         try:
             response = await self._client.get(DETAIL_URL.format(id=job.id), headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
         except httpx.HTTPError as e:

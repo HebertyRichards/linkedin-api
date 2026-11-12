@@ -72,17 +72,17 @@ class Assessment(BaseModel):
     @field_validator("reasons", mode="before")
     @classmethod
     def _single_line(cls, v: object) -> object:
-        return _clip(v, MAX_TEXT) if isinstance(v, str) else v
+        return clip(v, MAX_TEXT) if isinstance(v, str) else v
 
     @field_validator("gaps", mode="before")
     @classmethod
     def _short_items(cls, v: object) -> object:
         if not isinstance(v, list):
             return v
-        return tuple(_clip(item, MAX_GAP) for item in v if isinstance(item, str) and item.strip())[:MAX_GAPS]
+        return tuple(clip(item, MAX_GAP) for item in v if isinstance(item, str) and item.strip())[:MAX_GAPS]
 
 
-def _clip(text: str, limit: int) -> str:
+def clip(text: str, limit: int) -> str:
     """One line, cut at a word boundary with an ellipsis: the LLM does not always respect a length limit."""
     text = " ".join(text.split())
     if len(text) <= limit:

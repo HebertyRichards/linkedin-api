@@ -1,3 +1,4 @@
+import base64
 import logging
 
 import httpx
@@ -24,6 +25,14 @@ def _provider_message(response: httpx.Response) -> str:
     except ValueError:
         message = None
     return redact(str(message) if message else response.text[:300])
+
+
+def _attachments(message: Message) -> dict[str, list[dict[str, str]]]:
+    # Only when there is one: a message without files keeps the payload it always had.
+    if not message.attachments:
+        return {}
+    files = [{"filename": a.filename, "content": base64.b64encode(a.content).decode()} for a in message.attachments]
+    return {"attachments": files}
 
 
 class EmailNotifier:
@@ -69,6 +78,7 @@ class EmailNotifier:
                     "subject": message.subject,
                     "html": message.html,
                     "text": message.text,
+                    **_attachments(message),
                 },
                 timeout=_TIMEOUT_SECONDS,
             )

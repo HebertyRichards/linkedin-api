@@ -12,9 +12,11 @@ from app.channels.email import EmailNotifier
 from app.channels.whatsapp import WhatsAppNotifier
 from app.config.logging_config import setup_logging
 from app.config.settings import Settings, get_settings
-from app.schemas.resume import Resume, load_resume, parse_resume
+from app.schemas.resume import Contact, Resume, parse_contact, parse_resume, read_resume_file
 from app.services.assessor import JobAssessor
 from app.services.dispatcher import Dispatcher
+from app.services.llm import ChatClient
+from app.services.tailor import ResumeTailor
 from app.services.watcher import Watcher
 from app.sources.linkedin_guest import LinkedInGuestSource
 from app.state.seen_store import SeenStore
@@ -37,7 +39,7 @@ def _stop_on_signals(stop: asyncio.Event) -> None:
             loop.add_signal_handler(sig, stop.set)
 
 
-async def run(settings: Settings, resume: Resume | None = None) -> None:
+async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None) -> None:
     store = SeenStore(Path(settings.state_file) if settings.state_file else None)
     store.load()
     stop = asyncio.Event()
@@ -45,6 +47,7 @@ async def run(settings: Settings, resume: Resume | None = None) -> None:
 
     # One client for the whole process: a new one per call would redo DNS + TCP + TLS every time.
     async with httpx.AsyncClient() as client:
+        assessor, tailor = _ai_services(client, settings, profile)
         watcher = Watcher(
             source=LinkedInGuestSource(client),
             dispatcher=Dispatcher(build_channels(settings, client)),
@@ -52,7 +55,8 @@ async def run(settings: Settings, resume: Resume | None = None) -> None:
             searches=settings.searches,
             location=settings.job_location,
             interval_seconds=settings.poll_interval_seconds,
-            assessor=JobAssessor(client, settings, resume) if resume else None,
+            assessor=assessor,
+            tailor=tailor,
         )
         logger.info(
             "Watching %d search(es) in '%s' every ~%ds; channels: %s; state: %s; assessment: %s",
@@ -61,7 +65,7 @@ async def run(settings: Settings, resume: Resume | None = None) -> None:
             settings.poll_interval_seconds,
             " -> ".join(settings.channels),
             "file" if settings.state_file else "memory only",
-            settings.llm_model if resume else "off",
+            f"{settings.llm_model} (resume: {settings.llm_tailor_model})" if profile else "off",
         )
         try:
             await watcher.run(stop)
@@ -71,20 +75,33 @@ async def run(settings: Settings, resume: Resume | None = None) -> None:
     logger.info("Stopped")
 
 
-def _resume(settings: Settings) -> Resume:
-    text = settings.resume_yaml.get_secret_value()
-    return parse_resume(text) if text else load_resume(Path(settings.resume_file))
+def _profile(settings: Settings) -> tuple[Resume, Contact]:
+    text = settings.resume_yaml.get_secret_value() or read_resume_file(Path(settings.resume_file))
+    return parse_resume(text), parse_contact(text)
+
+
+def _ai_services(
+    client: httpx.AsyncClient, settings: Settings, profile: tuple[Resume, Contact] | None
+) -> tuple[JobAssessor | None, ResumeTailor | None]:
+    if profile is None:
+        return None, None
+    resume, contact = profile
+    # One client per model: Groq counts the free quota per model, so each one has its own breaker.
+    return (
+        JobAssessor(ChatClient(client, settings, model=settings.llm_model), resume),
+        ResumeTailor(ChatClient(client, settings, model=settings.llm_tailor_model), resume, contact),
+    )
 
 
 def main() -> None:
     try:
         settings = get_settings()
         # Read before anything starts: a broken resume stops the boot instead of failing every job.
-        resume = _resume(settings) if settings.assessment_enabled else None
+        profile = _profile(settings) if settings.assessment_enabled else None
     except RuntimeError as e:
         sys.exit(str(e))
     setup_logging(settings.log_level, json_logs=settings.log_json or settings.is_production)
-    asyncio.run(run(settings, resume))
+    asyncio.run(run(settings, profile))
 
 
 if __name__ == "__main__":

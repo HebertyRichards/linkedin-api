@@ -8,6 +8,10 @@ certifi==2026.10.23
     # via
     #   httpcore
     #   httpx
+fonttools==4.68.0
+    # via fpdf2
+fpdf2==2.9.0
+    # via -r requirements.in
 h11==0.16.0
     # via httpcore
 httpcore==1.0.9
@@ -18,6 +22,8 @@ idna==3.20
     # via
     #   anyio
     #   httpx
+pillow==13.0.0
+    # via fpdf2
 pydantic==2.14.1
     # via
     #   -r requirements.in

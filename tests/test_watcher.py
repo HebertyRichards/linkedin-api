@@ -7,7 +7,16 @@ import pytest
 from app.errors import ChannelUnavailableError, SourceUnavailableError
 from app.services.messages import job_message
 from app.state.seen_store import SeenStore
-from tests.helpers import Clock, FakeAssessor, FakeNotifier, FakeSource, assessment, job, make_watcher
+from tests.helpers import (
+    Clock,
+    FakeAssessor,
+    FakeNotifier,
+    FakeSource,
+    FakeTailor,
+    assessment,
+    job,
+    make_watcher,
+)
 
 
 async def test_first_cycle_is_a_baseline_then_only_new_jobs_go_out() -> None:
@@ -260,3 +269,53 @@ def test_new_score_for_the_same_jobs_is_a_new_message_key() -> None:
     rescored = job_message([job(1)], {job(1).key: assessment(70)})
     assert first.idempotency_key != rescored.idempotency_key
     assert first.idempotency_key == job_message([job(1)], {job(1).key: assessment(60)}).idempotency_key
+
+
+async def test_blocked_job_page_holds_the_jobs_once_then_sends_them_without_a_score() -> None:
+    # Seen on Railway: LinkedIn answers 429 on the 2nd job page and the circuit opens for the rest.
+    email = FakeNotifier("email")
+    store = SeenStore(None)
+    blocked = SourceUnavailableError("blocked (429)", blocked=True)
+    source = FakeSource([[], [job(1), job(2)]], details=blocked)
+    watcher = make_watcher(source, [email], store=store, assessor=FakeAssessor({job(1).key: assessment(90)}))
+
+    await watcher.cycle()
+    await watcher.cycle()
+    assert email.sent == []  # held: the next run scores them
+    assert not store.is_seen(job(1).key)
+    assert source.detail_calls == [job(1).key]  # a block stops the job pages for this batch
+
+    await watcher.cycle()
+    assert [message.keys for message in email.sent] == [(job(1).key,), (job(2).key,)]
+    assert "Nota" not in email.sent[0].text
+
+
+async def test_digest_held_by_a_block_runs_again_on_the_next_loop() -> None:
+    email = FakeNotifier("email")
+    blocked = SourceUnavailableError("blocked (429)", blocked=True)
+    watcher = make_watcher(FakeSource([[job(1)]], details=blocked), [email], assessor=FakeAssessor({}))
+
+    await watcher.digest_if_due()
+    assert email.sent == []
+    await watcher.digest_if_due()  # same clock: still due because it held jobs
+    assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_only_a_score_from_80_up_gets_the_tailored_resume_attached() -> None:
+    email = FakeNotifier("email")
+    tailor = FakeTailor()
+    scores = {job(1).key: assessment(80), job(2).key: assessment(79), job(3).key: assessment(95, "onsite")}
+    watcher = make_watcher(
+        FakeSource([[], [job(n) for n in range(1, 4)]]), [email], assessor=FakeAssessor(scores), tailor=tailor
+    )
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert tailor.calls == [job(1).key]
+    best, other = email.sent
+    assert [a.filename for a in best.attachments] == ["Curriculo-4400000001.pdf"]
+    assert "Currículo ajustado em anexo: Curriculo-4400000001.pdf" in best.text
+    assert "Resumo: Resumo ajustado." in best.text and "Currículo ajustado" in best.html
+    assert other.attachments == ()
+    assert "Currículo ajustado" not in other.text

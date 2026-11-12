@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-from app.channels.base import Message
+from app.channels.base import Attachment, Message
 from app.config.settings import Channel, Settings
 from app.errors import SourceUnavailableError
 from app.schemas.job import Assessment, Job, JobDetails, Workplace
+from app.schemas.resume import TailoredResume
 from app.services.dispatcher import Dispatcher
+from app.services.tailor import TailoredFile
 from app.services.watcher import Watcher
 from app.state.seen_store import SeenStore
 
@@ -70,13 +72,23 @@ experiencias:
     cargo: Estagiária de Dados
     inicio: 2024-03
     tecnologias: [Go, Kafka]
-    destaques: [{id: padaria-etl, texto: Pipeline de vendas diárias em Go., skills: [Go]}]
+    destaques:
+      - {id: padaria-etl, texto: Pipeline de vendas diárias em Go., skills: [Go]}
+      - {id: padaria-fila, texto: Fila de pedidos com Kafka., skills: [Kafka]}
 projetos:
   - id: clima
     nome: Painel do Clima
     fixo: true
     tecnologias: [Rust]
     destaques: [{id: clima-api, texto: Coleta de dados meteorológicos.}]
+  - id: feira
+    nome: Mapa da Feira
+    tecnologias: [Go]
+    destaques: [{id: feira-mapa, texto: Mapa das barracas da feira.}]
+  - id: horta
+    nome: Diário da Horta
+    tecnologias: [Kafka]
+    destaques: [{id: horta-log, texto: Registro de regas.}]
 formacao: [{curso: Estatística, instituicao: Universidade Exemplo, periodo: 2022 - 2026, status: Cursando}]
 habilidades: {dados: [Go, Kafka, Rust]}
 habilidades_sob_demanda: [Airflow]
@@ -134,6 +146,21 @@ class FakeAssessor:
         return self._scores.get(job.key)
 
 
+class FakeTailor:
+    """Builds a small fake file for any job and records which jobs asked for one."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def cached(self, job: Job) -> TailoredFile | None:
+        return None
+
+    async def tailor(self, job: Job, details: JobDetails) -> TailoredFile | None:
+        self.calls.append(job.key)
+        resume = TailoredResume(resumo="Resumo ajustado.", experiencias=[], projetos=[], habilidades=["Go"])
+        return TailoredFile(resume=resume, attachment=Attachment(f"Curriculo-{job.id}.pdf", b"%PDF-fake"))
+
+
 class FakeNotifier:
     def __init__(self, name: Channel, fail_with: Exception | None = None) -> None:
         self.name: Channel = name
@@ -165,6 +192,7 @@ def make_watcher(
     clock: Clock | None = None,
     searches: list[str] | None = None,
     assessor: FakeAssessor | None = None,
+    tailor: FakeTailor | None = None,
 ) -> Watcher:
     return Watcher(
         source=source,
@@ -174,6 +202,8 @@ def make_watcher(
         location="Brazil",
         interval_seconds=60,
         search_spacing=(0.0, 0.0),
+        job_page_spacing=(0.0, 0.0),
         clock=clock or Clock(),
         assessor=assessor,
+        tailor=tailor,
     )
