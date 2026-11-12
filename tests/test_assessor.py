@@ -57,9 +57,9 @@ async def test_scores_a_job_without_sending_contact_data(resume: Resume) -> None
     assert body["reasoning_effort"] == "low"
     assert body["response_format"]["json_schema"]["strict"] is True
     prompt = body["messages"][1]["content"]
-    assert "Criação de APIs REST." in prompt and "Buscamos dev Python." in prompt
+    assert "Pipeline de vendas diárias em Go." in prompt and "Buscamos pessoa de dados com Go." in prompt
     assert "atual (2026-11)" in prompt
-    for contact in ("Fulano", "90000-0000", "fulano@example.com"):
+    for contact in ("Ana Exemplo", "00000-0000", "ana@example.com"):
         assert contact not in prompt
 
 
@@ -131,10 +131,10 @@ def test_llm_output_is_bounded() -> None:
 def test_broken_resume_names_the_problem_not_the_content(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG)
     path = tmp_path / "curriculo.yaml"
-    path.write_text("contato: {telefone: '(11) 90000-0000'}\ntitulo: Dev\n", encoding="utf-8")
+    path.write_text("contato: {telefone: '(00) 12345-6789'}\ntitulo: Dev\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="RESUME_FILE is missing or has invalid fields") as error:
         load_resume(path)
-    assert "90000" not in str(error.value)
+    assert "12345" not in str(error.value)
 
     path.write_text("titulo: [unclosed", encoding="utf-8")
     with pytest.raises(RuntimeError, match="not valid YAML"):

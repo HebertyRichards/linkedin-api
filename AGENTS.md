@@ -15,7 +15,8 @@ their sources are in [SCOPE.md](SCOPE.md).
 3. **Single event loop, no locks.** Breakers, the seen-set and the WhatsApp hourly cap live in memory. There
    is no `await` between reading and writing that state. One replica only.
 4. **Never log secrets or personal data.** No headers, bodies or URLs with keys. Mask email and phone with
-   `app/utils/mask.py`; pass any provider error text through `redact()`.
+   `app/utils/mask.py`; pass any provider error text through `redact()`. The resume's `contato` block never
+   goes to an LLM, and test fixtures use made-up people only.
 5. **Keys only in headers**, never in a URL or query string.
 6. **Source data is untrusted.** It crosses `schemas/job.py` before anything else. Links are rebuilt from the
    id, never copied.

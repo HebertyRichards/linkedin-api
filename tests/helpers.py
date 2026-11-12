@@ -82,7 +82,9 @@ habilidades: {dados: [Go, Kafka, Rust]}
 habilidades_sob_demanda: [Airflow]
 """
 
-DETAILS = JobDetails(description="Buscamos pessoa de dados com Go.", seniority="Internship", employment_type="Full-time")
+DETAILS = JobDetails(
+    description="Buscamos pessoa de dados com Go.", seniority="Internship", employment_type="Full-time"
+)
 
 
 def assessment(score: int, workplace: Workplace = "remote") -> Assessment:
