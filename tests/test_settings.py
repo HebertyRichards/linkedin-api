@@ -77,8 +77,17 @@ def test_startup_error_lists_names_but_never_values(monkeypatch: pytest.MonkeyPa
 def test_assessment_needs_key_and_resume_together() -> None:
     assert not make_settings().assessment_enabled
     assert make_settings(llm_api_key="gsk_x", resume_file="curriculo.yaml").assessment_enabled
-    with pytest.raises(ValidationError, match="needs both LLM_API_KEY and RESUME_FILE"):
+    assert make_settings(llm_api_key="gsk_x", resume_yaml="titulo: Dev").assessment_enabled
+    with pytest.raises(ValidationError, match="needs LLM_API_KEY and a resume"):
         make_settings(llm_api_key="gsk_x")
+    with pytest.raises(ValidationError, match="RESUME_FILE or RESUME_YAML, not both"):
+        make_settings(llm_api_key="gsk_x", resume_file="curriculo.yaml", resume_yaml="titulo: Dev")
+
+
+def test_resume_yaml_never_shows_in_errors() -> None:
+    with pytest.raises(ValidationError) as error:
+        make_settings(resume_yaml="contato: {telefone: '(00) 12345-6789'}")
+    assert "12345" not in str(error.value)
 
 
 def test_llm_url_must_be_https_except_on_this_machine() -> None:

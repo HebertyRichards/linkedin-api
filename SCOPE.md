@@ -187,8 +187,9 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
 
 - **Uma classe só** para qualquer API no formato OpenAI: trocar de provedor é trocar `LLM_API_URL`,
   `LLM_MODEL` e `LLM_API_KEY`.
-- **O currículo vem de um YAML** (`RESUME_FILE`, fora do Git e da imagem). O bloco `contato` nunca é lido
-  pelo código que monta o prompt.
+- **O currículo vem de um YAML**, fora do Git e da imagem: `RESUME_FILE` (caminho, local) ou `RESUME_YAML`
+  (o conteúdo numa variável do Railway, guardada como segredo; atualizar é editar a variável). O bloco
+  `contato` nunca é lido pelo código que monta o prompt.
 - **A resposta da IA é dado não confiável:** JSON com schema estrito no pedido e validação no
   `schemas/job.py`, com limite de tamanho, igual ao dado da fonte.
 - **Falha segura para o alerta:** IA fora, cota esgotada (429 abre o breaker pelo `Retry-After`) ou página

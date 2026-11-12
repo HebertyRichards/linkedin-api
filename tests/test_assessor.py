@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.schemas.resume import Resume, load_resume
+from app.schemas.resume import Resume, load_resume, parse_resume
 from app.services.assessor import JobAssessor
 from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
 
@@ -133,10 +133,17 @@ def test_broken_resume_names_the_problem_not_the_content(tmp_path: Path, caplog:
     caplog.set_level(logging.DEBUG)
     path = tmp_path / "curriculo.yaml"
     path.write_text("contato: {telefone: '(00) 12345-6789'}\ntitulo: Dev\n", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="RESUME_FILE is missing or has invalid fields") as error:
+    with pytest.raises(RuntimeError, match="the resume is missing or has invalid fields") as error:
         load_resume(path)
     assert "12345" not in str(error.value)
 
     path.write_text("titulo: [unclosed", encoding="utf-8")
     with pytest.raises(RuntimeError, match="not valid YAML"):
         load_resume(path)
+    with pytest.raises(RuntimeError, match="RESUME_FILE could not be read"):
+        load_resume(tmp_path / "missing.yaml")
+
+
+def test_resume_from_a_variable_matches_the_file(tmp_path: Path, resume: Resume) -> None:
+    # RESUME_YAML on Railway holds the same text as the local file.
+    assert parse_resume(RESUME_YAML) == resume

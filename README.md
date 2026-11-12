@@ -66,7 +66,8 @@ error names the missing variables and never prints their values.
 | `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first when both are set |
 | `POLL_INTERVAL_SECONDS` | no | `1800` | Seconds between cycles, minimum 60 |
 | `LLM_API_KEY` | no | — | Turns on job scoring. Free key at console.groq.com |
-| `RESUME_FILE` | with `LLM_API_KEY` | — | Path of the resume YAML (git-ignored) |
+| `RESUME_FILE` | with `LLM_API_KEY` (or `RESUME_YAML`) | — | Path of the resume YAML (git-ignored). Local runs |
+| `RESUME_YAML` | with `LLM_API_KEY` (or `RESUME_FILE`) | — | The resume YAML itself, pasted as a multi-line variable. Railway |
 | `LLM_API_URL` | no | `https://api.groq.com/openai/v1` | Any OpenAI-compatible API |
 | `LLM_MODEL` | no | `openai/gpt-oss-20b` | Model used for the score |
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |

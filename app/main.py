@@ -12,7 +12,7 @@ from app.channels.email import EmailNotifier
 from app.channels.whatsapp import WhatsAppNotifier
 from app.config.logging_config import setup_logging
 from app.config.settings import Settings, get_settings
-from app.schemas.resume import Resume, load_resume
+from app.schemas.resume import Resume, load_resume, parse_resume
 from app.services.assessor import JobAssessor
 from app.services.dispatcher import Dispatcher
 from app.services.watcher import Watcher
@@ -71,11 +71,16 @@ async def run(settings: Settings, resume: Resume | None = None) -> None:
     logger.info("Stopped")
 
 
+def _resume(settings: Settings) -> Resume:
+    text = settings.resume_yaml.get_secret_value()
+    return parse_resume(text) if text else load_resume(Path(settings.resume_file))
+
+
 def main() -> None:
     try:
         settings = get_settings()
         # Read before anything starts: a broken resume stops the boot instead of failing every job.
-        resume = load_resume(Path(settings.resume_file)) if settings.assessment_enabled else None
+        resume = _resume(settings) if settings.assessment_enabled else None
     except RuntimeError as e:
         sys.exit(str(e))
     setup_logging(settings.log_level, json_logs=settings.log_json or settings.is_production)

@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     llm_api_url: str = Field(default="https://api.groq.com/openai/v1")
     llm_api_key: SecretStr = Field(default=SecretStr(""))
     llm_model: str = Field(default="openai/gpt-oss-20b")
+    # The resume: a file path (local) or the YAML itself (Railway, where the git-ignored file does not exist).
     resume_file: str = Field(default="")
+    resume_yaml: SecretStr = Field(default=SecretStr(""))
 
     @field_validator("resend_api_key", "evolution_api_key", "llm_api_key", mode="before")
     @classmethod
@@ -108,8 +110,11 @@ class Settings(BaseSettings):
                 "WHATSAPP_TO": self.whatsapp_to,
             },
         }
-        if bool(self.llm_api_key.get_secret_value()) != bool(self.resume_file):
-            raise ValueError("job assessment needs both LLM_API_KEY and RESUME_FILE, or neither")
+        resume_sources = sum(map(bool, (self.resume_file, self.resume_yaml.get_secret_value())))
+        if resume_sources > 1:
+            raise ValueError("set RESUME_FILE or RESUME_YAML, not both")
+        if bool(self.llm_api_key.get_secret_value()) != bool(resume_sources):
+            raise ValueError("job assessment needs LLM_API_KEY and a resume (RESUME_FILE or RESUME_YAML), or neither")
         for channel, fields in required.items():
             missing = [name for name, value in fields.items() if not value]
             if missing and len(missing) < len(fields):
@@ -137,7 +142,7 @@ class Settings(BaseSettings):
 
     @property
     def assessment_enabled(self) -> bool:
-        return bool(self.llm_api_key.get_secret_value() and self.resume_file)
+        return bool(self.llm_api_key.get_secret_value() and (self.resume_file or self.resume_yaml.get_secret_value()))
 
     @property
     def is_production(self) -> bool:

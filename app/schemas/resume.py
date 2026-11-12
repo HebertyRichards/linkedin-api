@@ -84,13 +84,19 @@ class Resume(_Model):
 
 
 def load_resume(path: Path) -> Resume:
-    """Read once at boot. Errors name the problem, never the content (it is personal data)."""
     try:
-        return Resume.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+        text = path.read_text(encoding="utf-8")
     except OSError as e:
         raise RuntimeError(f"RESUME_FILE could not be read: {type(e).__name__}") from None
+    return parse_resume(text)
+
+
+def parse_resume(text: str) -> Resume:
+    """Read once at boot. Errors name the problem, never the content (it is personal data)."""
+    try:
+        return Resume.model_validate(yaml.safe_load(text))
     except yaml.YAMLError:
-        raise RuntimeError("RESUME_FILE is not valid YAML") from None
+        raise RuntimeError("the resume is not valid YAML") from None
     except ValidationError as e:
         fields = ", ".join(".".join(str(p) for p in err["loc"]) for err in e.errors())
-        raise RuntimeError(f"RESUME_FILE is missing or has invalid fields: {fields}") from None
+        raise RuntimeError(f"the resume is missing or has invalid fields: {fields}") from None
