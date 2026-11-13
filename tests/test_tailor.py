@@ -153,3 +153,21 @@ async def test_an_unusable_reply_gives_no_file(resume: Resume, contact: Contact)
         result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
 
     assert result is None
+
+
+async def test_a_pdf_that_fails_to_render_gives_no_file_instead_of_failing_the_cycle(
+    resume: Resume, contact: Contact, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object) -> bytes:
+        raise RuntimeError("render bug")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = choice().model_dump_json()
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    monkeypatch.setattr("app.services.tailor.render_pdf", broken)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
+
+    assert result is None

@@ -199,9 +199,14 @@ class ResumeTailor:
             return None
         known = self._resume.prompt_text(self._today())
         tailored = build_tailored(self._resume, choice, details.description, known)
-        pdf = await asyncio.to_thread(
-            render_pdf, self._contact, self._resume.titulo, tailored, self._resume.formacao, self._resume.idiomas
-        )
+        try:
+            pdf = await asyncio.to_thread(
+                render_pdf, self._contact, self._resume.titulo, tailored, self._resume.formacao, self._resume.idiomas
+            )
+        except Exception:
+            # A render bug must not fail the cycle: the job would be retried, and fail, every cycle.
+            logger.exception("Tailored PDF of %s could not be rendered", job.key)
+            return None
         result = TailoredFile(resume=tailored, attachment=Attachment(filename=_filename(job), content=pdf))
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]

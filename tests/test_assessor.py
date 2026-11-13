@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.schemas.resume import Resume, load_resume, parse_resume
-from app.services.assessor import JobAssessor
+from app.services.assessor import JobAssessor, technologies, without_versions
 from app.services.llm import ChatClient
 from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
 
@@ -169,3 +169,39 @@ async def test_per_minute_limit_is_waited_out_not_taken_for_the_daily_quota(
 
     assert first is not None and second is not None  # the rest of the batch is still scored
     assert waits == [45.0]
+
+
+def test_versions_of_known_technologies_are_dropped_before_the_llm(resume: Resume) -> None:
+    names = technologies(resume)
+    text = "Go 1.22, kafka 3.x, Rust 1.75+ e Go 5 anos de experiência; Kotlin 2 e MySQL 8."
+
+    assert without_versions(text, names) == "Go, kafka, Rust e Go 5 anos de experiência; Kotlin 2 e MySQL 8."
+    assert without_versions("Java 17", {"Java"}) == "Java"
+    assert without_versions("MySQL 8", {"SQL"}) == "MySQL 8"  # a name inside another word is not touched
+
+
+async def test_the_prompt_has_no_version_gap_to_penalize(resume: Resume) -> None:
+    prompts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompts.append(json.loads(request.content)["messages"][1]["content"])
+        return reply(GOOD)
+
+    details = DETAILS.model_copy(update={"description": "Requisitos: Go 1.22 e Kafka 3.6."})
+    assessor, client = assessor_for(handler, resume)
+    async with client:
+        await assessor.assess(job(1), details)
+
+    assert "Requisitos: Go e Kafka." in prompts[0]
+
+
+@pytest.mark.parametrize(
+    "text", ["Java 3 a 5 anos", "Java 2-3 anos", "Java 3 ou mais anos", "Java 5+ years", "Java 18 meses"]
+)
+def test_years_of_experience_are_never_taken_for_a_version(text: str) -> None:
+    assert without_versions(text, {"Java"}) == text
+
+
+def test_a_number_that_is_part_of_the_name_stays() -> None:
+    assert "S3" in technologies(parse_resume(RESUME_YAML.replace("[Go, Kafka, Rust]", "[Go, Kafka, Rust, S3]")))
+    assert without_versions("Java 17 e S3", {"Java", "S3"}) == "Java e S3"

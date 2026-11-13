@@ -197,6 +197,12 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
   no momento" (ou "Currículo ajustado indisponível" quando só o currículo falhou).
 - **Observado (2026-11-12):** o filtro `f_WT` (presencial/remoto) não tem efeito no `jobs-guest`, e a página
   da vaga não traz o modelo de trabalho num campo próprio. Por isso quem classifica é a IA, lendo a descrição.
+- **Versão não é falta:** antes de ir para a IA, o número de versão some das tecnologias que o currículo já
+  tem ("Java 17" vira "Java"; "Java 5 anos" fica). Medido (2026-11-12): vaga pedindo Java 17, PHP 8 e
+  MySQL 8 tirou 20 contra um currículo com Java 11; só a regra no prompt levou a 30; tirando a versão, 90. Faixa de anos ("3 a 5 anos", "2-3 anos") e número que faz parte do nome
+  ("S3") nunca são cortados.
+- **Tecnologia parecida baixa menos que uma que falta** (MySQL para PostgreSQL, Vitest para Jest): regra no
+  prompt, a pedido do autor (quem conhece uma se adapta à outra). Não medida isoladamente.
 - **Descrição cortada em 6.000 caracteres** (~1.500 tokens): cabe na cota por minuto sem perder os
   requisitos, que costumam vir no fim.
 - A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
