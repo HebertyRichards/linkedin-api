@@ -17,9 +17,10 @@ from app.services.assessor import JobAssessor
 from app.services.dispatcher import Dispatcher
 from app.services.llm import ChatClient
 from app.services.tailor import ResumeTailor
-from app.services.watcher import Watcher
+from app.services.watcher import INTERVAL_JITTER, Watcher
 from app.sources.linkedin_guest import LinkedInGuestSource
 from app.state.seen_store import SeenStore
+from app.utils.watchdog import Watchdog
 
 logger = logging.getLogger("app")
 
@@ -48,6 +49,7 @@ async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None)
     # One client for the whole process: a new one per call would redo DNS + TCP + TLS every time.
     async with httpx.AsyncClient() as client:
         assessor, tailor = _ai_services(client, settings, profile)
+        watchdog = Watchdog(stall_after(settings.poll_interval_seconds))
         watcher = Watcher(
             source=LinkedInGuestSource(client),
             dispatcher=Dispatcher(build_channels(settings, client)),
@@ -57,6 +59,7 @@ async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None)
             interval_seconds=settings.poll_interval_seconds,
             assessor=assessor,
             tailor=tailor,
+            heartbeat=watchdog.beat,
         )
         logger.info(
             "Watching %d search(es) in '%s' every ~%ds; channels: %s; state: %s; assessment: %s",
@@ -67,12 +70,21 @@ async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None)
             "file" if settings.state_file else "memory only",
             f"{settings.llm_model} (resume: {settings.llm_tailor_model})" if profile else "off",
         )
+        watchdog.start()
         try:
             await watcher.run(stop)
         finally:
+            watchdog.stop()
             # SIGTERM lets the cycle in flight finish; the state is written once more before leaving.
             await store.save()
     logger.info("Stopped")
+
+
+def stall_after(interval_seconds: int) -> float:
+    """How long the loop may go without a heartbeat. The longest normal silence is one sleep (the interval
+    +20%) or one step: a cycle that scores and tailors 10 jobs, with the LLM waiting out its per-minute
+    limit, takes up to ~50 min. One more hour of margin, so only a real stall restarts the worker."""
+    return max(interval_seconds * (1 + INTERVAL_JITTER), 3600.0) + 3600.0
 
 
 def _profile(settings: Settings) -> tuple[Resume, Contact]:

@@ -151,6 +151,11 @@ email takes over.
 
 ## Security
 
+- **No one can call this project:** it opens no port and has no route. Every call goes out (LinkedIn,
+  Groq, Resend, Evolution), so the real entry points are the API keys in Railway Variables. See SCOPE.md 5.
+- **Health:** a watchdog thread exits with code 1 when the loop stops for 2 h (30 min poll), and Railway's
+  On Failure restart policy brings it back. No `/health` endpoint: Railway checks it only at deploy time.
+
 - **Secrets come only from the environment.** `.env` is git-ignored, and `.env.example` holds names only.
 - **Keys travel only in headers**, never in URLs. The httpx logger is set to WARNING, so request URLs are
   not logged.

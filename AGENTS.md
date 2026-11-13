@@ -40,7 +40,7 @@ app/
                            # llm (chat client, one breaker per model), assessor (job score),
                            # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
-  utils/                   # circuit_breaker, retry, mask
+  utils/                   # circuit_breaker, retry, mask, watchdog (exit 1 on a stalled loop)
 tests/
 ```
 

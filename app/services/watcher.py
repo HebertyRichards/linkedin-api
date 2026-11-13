@@ -64,8 +64,10 @@ class Watcher:
         clock: Callable[[], datetime] = _utc_now,
         assessor: Assessor | None = None,
         tailor: Tailor | None = None,
+        heartbeat: Callable[[], None] = lambda: None,
     ) -> None:
         self._source = source
+        self._heartbeat = heartbeat
         self._assessor = assessor
         self._tailor = tailor
         self._dispatcher = dispatcher
@@ -85,11 +87,13 @@ class Watcher:
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             for step in (self.digest_if_due, self.cycle):
+                self._heartbeat()  # alive: the longest silence is one step or one sleep, never both
                 try:
                     await step()
                 except Exception:
                     # A bug in one step must not end the worker: the next loop starts clean.
                     logger.exception("%s failed", step.__name__)
+            self._heartbeat()
             delay = self._interval * random.uniform(1 - INTERVAL_JITTER, 1 + INTERVAL_JITTER)  # noqa: S311
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=delay)
