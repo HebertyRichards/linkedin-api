@@ -1,8 +1,8 @@
 # linkedin-api — escopo
 
 Worker que detecta **vaga nova com candidatura pelo próprio LinkedIn (Easy Apply)** para
-buscas configuradas e envia **um aviso por email (Resend) ou WhatsApp (Evolution API)**.
-Pelo menos um dos dois canais precisa aceitar cada aviso.
+buscas configuradas e envia **um aviso por email (Resend), WhatsApp (Evolution API) ou Telegram (Bot
+API, D5)**. Pelo menos um dos canais configurados precisa aceitar cada aviso.
 
 **Latência alvo:** o aviso chega em até ~1-2 min depois de a vaga aparecer na busca pública do
 LinkedIn. O worker não controla quanto o LinkedIn demora para mostrar a vaga na busca depois de
@@ -224,6 +224,59 @@ ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe s
   fonte embutida só tem Latin-1, então travessão, reticências e aspas curvas viram ASCII.
 - O PDF tem data de criação fixa: o mesmo currículo dá os mesmos bytes e a mesma chave de idempotência.
 
+### D5. Canal Telegram (2026-11-13)
+
+Um terceiro canal, opcional, pela [Bot API](https://core.telegram.org/bots/api) oficial: o texto do aviso e
+o PDF do currículo ajustado chegam numa conversa com um robô seu.
+
+| | WhatsApp (Evolution) | Telegram (Bot API) |
+|---|---|---|
+| Custo | um serviço a mais no Railway | zero: "bots can message their users at no cost" [V] ([FAQ](https://core.telegram.org/bots/faq)) |
+| Termos | robô em número comum viola os termos; teto de 6/h | API oficial para robôs |
+| Cai quando | o QR Code expira | só se a API do Telegram cair |
+| PDF | não (só texto) | `sendDocument`, até 50 MB [V] |
+| Limite | o nosso (6/h) | ~1 mensagem/s por conversa [V]; o worker manda poucas por hora |
+
+**Decisões:**
+
+- **Só envio, sem webhook e sem porta.** Webhook e `getUpdates` são os dois jeitos de *receber* mensagens
+  [V]; o worker não recebe nada. O `chat_id` sai de uma chamada única a `getUpdates`, feita pelo autor no
+  navegador (passo no README), não pelo código.
+- **O robô só fala com quem falou com ele antes** [I]: o autor manda `/start` para o robô uma vez.
+- **`TELEGRAM_CHAT_ID` só numérico** (conversa privada positiva, grupo negativo). Nome de canal
+  (`@canal`) é recusado no boot: o aviso tem dados da busca e vai só para o autor.
+- **WhatsApp continua.** O Telegram é um canal a mais; desligar a Evolution é decisão separada do autor
+  (economiza o serviço no Railway). `NOTIFY_PRIMARY` passa a aceitar `telegram`; o padrão continua
+  `whatsapp` para não mudar a ordem de quem já está no ar. Ordem: o principal, depois email, WhatsApp,
+  Telegram.
+- **Formato HTML do Telegram**, montado em `services/messages.py` (o mesmo lugar do texto e do email, para
+  a mensagem continuar determinística). Só as tags aceitas (`<b>`, `<a>`) [V]. Todo texto vindo de fora
+  (título, empresa, nota da IA) passa por `html.escape(..., quote=False)`: o Telegram só entende `&lt;`,
+  `&gt;`, `&amp;` e `&quot;` [V], e o `&#x27;` que o `escape` padrão gera para `'` daria erro 400.
+- **Limite de 4096 caracteres por mensagem** [V]: o aviso vai em blocos, um por vaga, juntados até o limite.
+  Um resumo de 10 vagas com currículo ajustado vira 2 ou 3 mensagens.
+- **PDF depois do texto**, um `sendDocument` por arquivo, com o título da vaga na legenda (até 1024
+  caracteres [V]) e 1 s entre os envios. `sendMediaGroup` foi descartado: pede no mínimo 2 arquivos, então
+  seriam dois caminhos de código para o mesmo resultado.
+- **Falha no meio do envio: não perder vaga nem currículo** (pedido do autor, 2026-11-13). Qualquer parte que
+  falhe (um bloco de texto ou um PDF) faz o aviso inteiro falhar: o próximo canal manda tudo, e sem nenhum
+  canal o próximo ciclo tenta de novo. O custo: parte do aviso pode chegar repetida no Telegram, que não tem
+  chave de idempotência.
+- **Resiliência igual à do WhatsApp:** timeout de 15 s, até 2 novas tentativas só quando a requisição
+  comprovadamente não chegou (erro de conexão) ou em 5xx, e breaker próprio. 429 traz
+  `parameters.retry_after` [V]: espera e tenta de novo se for até 30 s; acima disso, o canal fica
+  indisponível e a reserva assume. 401/403 (token revogado, robô bloqueado) e 400 viram
+  `ChannelRejectedError`.
+- **O token vai na URL** (`https://api.telegram.org/bot<token>/sendMessage`) [V]. Por isso:
+  - nenhuma URL de requisição vai para o log; o `httpx` já fica em WARNING (`logging_config.py`), e os
+    erros usam só o nome da exceção, nunca `str(e)`;
+  - `utils/mask.redact` passa a mascarar o formato do token (`123456:ABC...`), caso ele apareça numa
+    resposta de erro;
+  - quem tem o token controla o robô (manda mensagem como ele), mas não a sua conta pessoal do Telegram.
+    Se vazar: @BotFather → `/revoke`.
+- **Fora do escopo:** comandos no robô (`/pausar`, botões), resposta a mensagens e qualquer leitura de
+  updates. Tudo isso exigiria ler mensagens de qualquer pessoa que achar o robô.
+
 ---
 
 ## 3. Como funciona
@@ -363,7 +416,7 @@ Aqui o rate limit é **de saída**: não existe API de entrada para limitar.
 
 **Ninguém de fora chama este projeto.** Ele não abre porta: nenhum servidor HTTP, nenhum `EXPOSE` no
 Dockerfile, nenhuma rota. Mesmo que se gere um domínio público no Railway, não há nada escutando (o
-Railway responde 502). Toda chamada é **de saída**, do worker para quatro serviços:
+Railway responde 502). Toda chamada é **de saída**, do worker para cinco serviços (o Telegram só se configurado):
 
 | Destino | Autenticação | Quem pode abusar | O que dá para fazer com a chave | Proteção |
 |---|---|---|---|---|
@@ -371,6 +424,7 @@ Railway responde 502). Toda chamada é **de saída**, do worker para quatro serv
 | Groq (`LLM_API_KEY`) | `Authorization: Bearer` | quem tiver a chave | gastar a cota grátis | plano grátis sem cartão: abuso não gera conta; só o currículo **sem** `contato` sai |
 | Resend (`RESEND_API_KEY`) | `Authorization: Bearer` | quem tiver a chave | enviar email em seu nome | chave "Sending access"; sem domínio, só envia para o email da própria conta |
 | Evolution (`EVOLUTION_API_KEY`) | header `apikey` | quem tiver a chave **e** a URL | enviar WhatsApp pelo seu número | token da instância, não o global; https obrigatório |
+| Telegram (`TELEGRAM_BOT_TOKEN`) | token na URL | quem tiver o token | mandar mensagem como o robô (não acessa sua conta) | URL nunca vai para log; `redact` mascara o token; `/revoke` no @BotFather (D5) |
 
 - **O ponto de entrada de verdade são as chaves**, não a API. Elas ficam só nas Variables do Railway e no
   arquivo de ambiente local (fora do Git, verificado pelo secrets-guard). Quem acessa o projeto no Railway
@@ -418,7 +472,9 @@ Railway faz sempre é reiniciar quem sai com erro (política On Failure, até 10
 | `EVOLUTION_INSTANCE` | canal WhatsApp | — | instância que envia | crie uma **nova** (ex.: `job-alerts`) com número dedicado, não o da loja |
 | `EVOLUTION_API_KEY` | canal WhatsApp | — | token da instância | Evolution Manager, na instância (local exato: conferir na v2.3.7) |
 | `WHATSAPP_TO` | canal WhatsApp | — | seu número (`5511999999999`) ou grupo (`...@g.us`) | grupo: `GET /group/fetchAllGroups/{instance}` (README do whatsapp-automation) |
-| `NOTIFY_PRIMARY` | não | `whatsapp` | canal tentado primeiro (só importa com os 2) | — |
+| `TELEGRAM_BOT_TOKEN` | canal Telegram | — | token do robô (segredo) | Telegram → @BotFather → `/newbot` |
+| `TELEGRAM_CHAT_ID` | canal Telegram | — | sua conversa com o robô (número) | mande `/start` ao robô e abra `https://api.telegram.org/bot<token>/getUpdates` no navegador: `message.chat.id` |
+| `NOTIFY_PRIMARY` | não | `whatsapp` | canal tentado primeiro (`email`, `whatsapp` ou `telegram`; só importa com 2 ou mais) | — |
 | `POLL_INTERVAL_SECONDS` | não | `1800` | intervalo entre ciclos; mínimo 60 | — |
 | `STATE_FILE` | não | vazio = só memória | ex.: `/data/seen.json` num volume | Railway → serviço → Volumes → montar em `/data` |
 | `LOG_LEVEL` | não | `INFO` | — | — |
@@ -470,6 +526,7 @@ linkedin-api/
     channels/base.py         # Protocol Notifier
     channels/email.py        # Resend via httpx + Idempotency-Key
     channels/whatsapp.py     # Evolution: connectionState + sendText
+    channels/telegram.py     # Bot API: sendMessage em blocos + sendDocument (D5)
     services/watcher.py      # ciclo
     services/dispatcher.py   # principal → reserva
     services/messages.py     # texto do aviso (determinístico, para a idempotência)
@@ -516,6 +573,20 @@ Os comentários ficam em inglês e enxutos.
    - Railway como worker, com volume.
    - `deploy.yml` por tag.
    - README em inglês com o passo a passo de cada env.
+5. **Canal Telegram (D5).** O que muda, arquivo por arquivo:
+   - `config/settings.py`: `Channel` ganha `telegram`; `TELEGRAM_BOT_TOKEN` (`SecretStr`, sem espaços) e
+     `TELEGRAM_CHAT_ID` (só número); canal completo ou nenhum; ordem principal → email → WhatsApp →
+     Telegram.
+   - `channels/base.py`: `Message` ganha os blocos HTML do Telegram (um por vaga).
+   - `services/messages.py`: monta esses blocos para `job_message` e `source_down_message`, com
+     `escape(..., quote=False)`.
+   - `channels/telegram.py`: novo, no molde do `whatsapp.py`.
+   - `utils/mask.py`: `redact` mascara o token.
+   - `main.py`: `build_channels` cria o canal.
+   - Docs: `.env.example`, README (criar o robô e achar o `chat_id`), AGENTS.md (layout).
+   - Testes com `httpx.MockTransport`: envio feliz, blocos acima de 4096, escape de `<`, `&` e `'`, PDF
+     depois do texto, falha só do PDF, 429 com `retry_after`, 403, token fora do log, settings pela metade.
+   - **Feito (2026-11-13):** 119 testes passando (18 novos), `make check` limpo. Falta testar com um robô real.
 
 ## 9. Critérios de aceite
 
@@ -537,6 +608,13 @@ Os comentários ficam em inglês e enxutos.
   - [ ] O estado gravado contém só ids e datas.
 - **Robustez:**
   - [ ] A fonte falhando por 1 hora seguida gera um único aviso.
+- **Telegram (D5):**
+  - [ ] Com só `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID`, o worker sobe e o aviso chega no Telegram.
+  - [ ] Vaga com nota 50 ou mais chega com o PDF do currículo ajustado logo depois do texto.
+  - [ ] Título com `<`, `&` ou `'` chega intacto (sem erro 400).
+  - [ ] Um resumo acima de 4096 caracteres chega inteiro, em mais de uma mensagem.
+  - [ ] Com o robô bloqueado ou o token revogado, o aviso sai pela reserva no mesmo ciclo.
+  - [ ] O token não aparece em nenhuma linha de log, nem nos erros.
 
 ## 10. Fora do escopo do v1
 

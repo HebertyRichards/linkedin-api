@@ -1,8 +1,8 @@
 # linkedin-api
 
-A small worker that watches LinkedIn job searches and alerts you, by **email (Resend)** or
-**WhatsApp (Evolution API)**, as soon as a new **Easy Apply** job shows up: the kind you apply to
-inside LinkedIn itself. One of the two channels must accept each alert; the other is the fallback.
+A small worker that watches LinkedIn job searches and alerts you, by **email (Resend)**, **WhatsApp
+(Evolution API)** or **Telegram (Bot API)**, as soon as a new **Easy Apply** job shows up: the kind you apply
+to inside LinkedIn itself. One configured channel must accept each alert; the others are the fallback.
 
 It does not apply for you, does not list every job, and needs no database.
 
@@ -32,7 +32,7 @@ every ~30 min (±20%)
   bulk sending.
 - **Links are rebuilt from the job id** (`https://www.linkedin.com/jobs/view/<id>/`), never copied from the
   page.
-- **"Delivered" means the provider accepted the message** (a 2xx from Resend or Evolution). If the primary
+- **"Delivered" means the provider accepted the message** (a 2xx from Resend, Evolution or Telegram). If the primary
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
 - **With `LLM_API_KEY` and `RESUME_FILE`, each new job gets a score (0-100)** against your resume, with the
@@ -42,7 +42,8 @@ every ~30 min (±20%)
 - **A job scored 50 or more (not on-site) also gets a resume tailored to it,** attached to the email as a
   PDF, with a preview in the card (summary, top highlights, projects). The AI only picks and orders what
   the resume YAML already has and rewrites the summary; the code checks every pick and drops a summary
-  that names a technology or a seniority level the resume does not have. WhatsApp gets the text only.
+  that names a technology or a seniority level the resume does not have. Telegram gets the PDF right after
+  the text; WhatsApp gets the text only.
 - **If the job source fails for 1 hour in a row,** you get one "source failing" alert. It is not
   repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
   recognizes (LinkedIn changed the markup or answered with a challenge page).
@@ -67,7 +68,9 @@ error names the missing variables and never prints their values.
 | `EVOLUTION_API_KEY` | WhatsApp | — | The **instance** token |
 | `EVOLUTION_INSTANCE` | WhatsApp | — | Instance name |
 | `WHATSAPP_TO` | WhatsApp | — | Your number with country and area code (`5511999999999`) or a group id (`...@g.us`) |
-| `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first when both are set |
+| `TELEGRAM_BOT_TOKEN` | Telegram | — | Bot token from @BotFather (secret) |
+| `TELEGRAM_CHAT_ID` | Telegram | — | Numeric id of your chat with the bot (a group id is negative) |
+| `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first (`email`, `whatsapp` or `telegram`); then email, WhatsApp, Telegram |
 | `POLL_INTERVAL_SECONDS` | no | `1800` | Seconds between cycles, minimum 60 |
 | `LLM_API_KEY` | no | — | Turns on job scoring. Free key at console.groq.com |
 | `RESUME_FILE` | with `LLM_API_KEY` (or `RESUME_YAML`) | — | Path of the resume YAML (git-ignored). Local runs |
@@ -108,6 +111,17 @@ error names the missing variables and never prints their values.
 
 The worker sends only to `WHATSAPP_TO`. It never reads contacts and never answers messages.
 
+**Telegram** (free, official API; you read the alerts in the Telegram app on your phone)
+1. In Telegram, open **@BotFather**, send `/newbot`, pick a name, and set the token it gives as
+   `TELEGRAM_BOT_TOKEN`.
+2. Open your new bot and send `/start`: a bot can only write to someone who wrote to it first.
+3. Find your chat id once: open `https://api.telegram.org/bot<token>/getUpdates` in any browser (the phone's
+   works) and copy `message.chat.id` into `TELEGRAM_CHAT_ID`. Only a number is accepted, not a `@name`.
+4. Optional: `NOTIFY_PRIMARY=telegram` to try it first.
+
+The worker only sends to `TELEGRAM_CHAT_ID`; it never reads the bot's messages, so there is no webhook and
+no port. If the token leaks, send `/revoke` to @BotFather and set the new one.
+
 ## Running locally
 
 ```bash
@@ -144,21 +158,27 @@ alerts start with the next job that gets posted. Stop with Ctrl+C.
 | LinkedIn search | Opens after 3 failures, or at once on 429/999. Waits 5 min, doubling up to 60 min, and honors `Retry-After` | None inside a cycle; the next cycle is the retry |
 | Resend | Opens after 5 failures, for 60 s | 3 attempts on network errors, 429 and 5xx. The `Idempotency-Key` makes a repeat safe |
 | Evolution | Opens after 5 failures, for 30 s | 3 attempts, only when the request never left (connection error) or on 5xx. A read timeout is never retried, because the message may have gone |
+| Telegram | Opens after 5 failures, for 30 s | Same as Evolution, plus a 429 whose `retry_after` is up to 30 s. A longer wait hands the alert to the next channel |
 
 Before sending, the worker checks `GET /instance/connectionState/<instance>`. When the phone is not
 connected, it goes straight to email. WhatsApp also has its own cap of 6 messages an hour; over that,
 email takes over.
 
+Telegram sends a long digest in several messages (4096 characters each, never cutting a job), then each
+tailored resume. If any part fails, the whole alert counts as failed and the next channel sends it
+complete: a part repeated on Telegram is better than a job or a resume lost.
+
 ## Security
 
 - **No one can call this project:** it opens no port and has no route. Every call goes out (LinkedIn,
-  Groq, Resend, Evolution), so the real entry points are the API keys in Railway Variables. See SCOPE.md 5.
+  Groq, Resend, Evolution, Telegram), so the real entry points are the API keys in Railway Variables. See SCOPE.md 5.
 - **Health:** a watchdog thread exits with code 1 when the loop stops for 2 h (30 min poll), and Railway's
   On Failure restart policy brings it back. No `/health` endpoint: Railway checks it only at deploy time.
 
 - **Secrets come only from the environment.** `.env` is git-ignored, and `.env.example` holds names only.
-- **Keys travel only in headers**, never in URLs. The httpx logger is set to WARNING, so request URLs are
-  not logged.
+- **Keys travel only in headers**, never in URLs, except the Telegram token, which the Bot API takes in
+  the URL. The httpx logger is set to WARNING, so request URLs are not logged, and errors that echo the
+  token have it masked (`<bot-token>`).
 - **Logs never contain headers or bodies.** Email addresses and phone numbers are masked
   (`m***@example.com`, `5511*****9999`).
 - **Job data is untrusted.** Each job is validated by a schema with bounded lengths, the text is

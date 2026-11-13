@@ -2,16 +2,20 @@ import base64
 import json
 import logging
 from collections.abc import Callable
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
 
 from app.channels.email import EmailNotifier
+from app.channels.telegram import MAX_TEXT, TelegramNotifier, chunks
 from app.channels.whatsapp import WhatsAppNotifier
+from app.config.logging_config import setup_logging
 from app.errors import ChannelRejectedError, ChannelUnavailableError
+from app.main import build_channels
 from app.services.messages import job_message
 from app.services.tailor import TailoredFile
-from tests.helpers import DETAILS, WHATSAPP, FakeTailor, job, make_settings
+from tests.helpers import DETAILS, TELEGRAM, TELEGRAM_TOKEN, WHATSAPP, FakeTailor, job, make_settings
 
 Handler = Callable[[httpx.Request], httpx.Response]
 MESSAGE = job_message([job(1)])
@@ -174,3 +178,189 @@ async def test_whatsapp_hourly_cap_hands_over_to_the_next_channel() -> None:
         await notifier.send(MESSAGE)
         with pytest.raises(ChannelUnavailableError, match="hourly cap"):
             await notifier.send(MESSAGE)
+
+
+def telegram(on_call: Callable[[str, httpx.Request], httpx.Response]) -> Handler:
+    def handler(request: httpx.Request) -> httpx.Response:
+        prefix = f"/bot{TELEGRAM_TOKEN}/"
+        assert request.url.host == "api.telegram.org"
+        assert request.url.path.startswith(prefix)
+        return on_call(request.url.path.removeprefix(prefix), request)
+
+    return handler
+
+
+def ok(method: str, request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+
+
+def telegram_notifier(client: httpx.AsyncClient) -> TelegramNotifier:
+    return TelegramNotifier(client, make_settings(**TELEGRAM), retry_base_delay=0, file_spacing=0)
+
+
+def form(request: httpx.Request) -> dict[str, str]:
+    return {key: values[0] for key, values in parse_qs(request.content.decode()).items()}
+
+
+async def test_telegram_sends_html_to_the_chat_and_never_logs_the_token(caplog: pytest.LogCaptureFixture) -> None:
+    # Only the app's loggers: httpx logs each URL at INFO, and setup_logging keeps it at WARNING.
+    caplog.set_level(logging.DEBUG, logger="app")
+    calls: list[tuple[str, httpx.Request]] = []
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        calls.append((method, request))
+        return ok(method, request)
+
+    async with client_for(telegram(on_call)) as client:
+        await telegram_notifier(client).send(MESSAGE)
+
+    assert [method for method, _ in calls] == ["sendMessage"]  # no file without a tailored resume
+    body = form(calls[0][1])
+    assert body["chat_id"] == "987654321"
+    assert body["parse_mode"] == "HTML"
+    assert f"<b>{job(1).title}</b>" in body["text"]
+    assert f'<a href="{job(1).url}">' in body["text"]
+    assert TELEGRAM_TOKEN not in caplog.text
+
+
+def test_telegram_html_escapes_what_comes_from_outside() -> None:
+    risky = job(1, title="C++ <Dev> & 'Lead'")
+    blocks = job_message([risky]).telegram_blocks
+
+    assert "<b>C++ &lt;Dev&gt; &amp; 'Lead'" in blocks[1]
+    assert "&#x27;" not in "".join(blocks)  # Telegram answers 400 to the entity escape() writes for '
+
+
+async def test_telegram_sends_the_resume_after_the_text_with_the_job_in_the_caption() -> None:
+    calls: list[tuple[str, httpx.Request]] = []
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        calls.append((method, request))
+        return ok(method, request)
+
+    resume = await FakeTailor().tailor(job(1), DETAILS)
+    assert isinstance(resume, TailoredFile)
+    async with client_for(telegram(on_call)) as client:
+        await telegram_notifier(client).send(job_message([job(1)], tailored={job(1).key: resume}))
+
+    assert [method for method, _ in calls] == ["sendMessage", "sendDocument"]
+    upload = calls[1][1].content
+    assert b'filename="Curriculo-4400000001.pdf"' in upload
+    assert b"%PDF-fake" in upload
+    assert "Currículo para: Python Developer".encode() in upload
+
+
+async def test_telegram_long_digest_goes_in_several_messages_without_cutting_a_job() -> None:
+    texts: list[str] = []
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        texts.append(form(request)["text"])
+        return ok(method, request)
+
+    jobs = [job(n, title="Desenvolvedor Python " + "x" * 190) for n in range(1, 31)]
+    async with client_for(telegram(on_call)) as client:
+        await telegram_notifier(client).send(job_message(jobs))
+
+    assert len(texts) > 1
+    assert all(len(text) <= MAX_TEXT for text in texts)
+    assert "".join(texts).count("Ver vaga e se candidatar") == 30
+
+
+def test_chunks_never_split_a_block() -> None:
+    assert chunks(["a" * 6, "b" * 6, "c" * 6], limit=14) == ["a" * 6 + "\n\n" + "b" * 6, "c" * 6]
+
+
+async def test_telegram_failed_resume_fails_the_message_so_the_reserve_sends_it_whole() -> None:
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        if method == "sendDocument":
+            return httpx.Response(400, json={"ok": False, "description": "Bad Request: file is empty"})
+        return ok(method, request)
+
+    resume = await FakeTailor().tailor(job(1), DETAILS)
+    assert isinstance(resume, TailoredFile)
+    async with client_for(telegram(on_call)) as client:
+        with pytest.raises(ChannelRejectedError, match="sendDocument: status 400: Bad Request"):
+            await telegram_notifier(client).send(job_message([job(1)], tailored={job(1).key: resume}))
+
+
+async def test_telegram_short_rate_limit_waits_and_retries() -> None:
+    attempts = 0
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 0}})
+        return ok(method, request)
+
+    async with client_for(telegram(on_call)) as client:
+        await telegram_notifier(client).send(MESSAGE)
+
+    assert attempts == 2
+
+
+async def test_telegram_long_rate_limit_hands_over_to_the_next_channel() -> None:
+    attempts = 0
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 600}})
+
+    async with client_for(telegram(on_call)) as client:
+        with pytest.raises(ChannelUnavailableError, match="rate limited"):
+            await telegram_notifier(client).send(MESSAGE)
+
+    assert attempts == 1
+
+
+async def test_telegram_blocked_bot_is_rejected_with_the_token_masked() -> None:
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"ok": False, "description": f"Forbidden: bot {TELEGRAM_TOKEN} was blocked"})
+
+    async with client_for(telegram(on_call)) as client:
+        with pytest.raises(ChannelRejectedError, match="Forbidden") as error:
+            await telegram_notifier(client).send(MESSAGE)
+
+    assert TELEGRAM_TOKEN not in str(error.value)
+    assert "<bot-token>" in str(error.value)
+
+
+async def test_telegram_read_timeout_is_not_retried_and_hides_the_url() -> None:
+    attempts = 0
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ReadTimeout(f"timed out on {request.url}", request=request)
+
+    async with client_for(telegram(on_call)) as client:
+        with pytest.raises(ChannelUnavailableError) as error:
+            await telegram_notifier(client).send(MESSAGE)
+
+    assert attempts == 1
+    assert TELEGRAM_TOKEN not in str(error.value)
+
+
+def test_request_urls_stay_out_of_the_logs_even_at_debug() -> None:
+    root = logging.getLogger()
+    saved = root.level, root.handlers[:], {name: logging.getLogger(name).level for name in ("httpx", "httpcore")}
+    try:
+        setup_logging("DEBUG", json_logs=True)
+        # The Telegram token travels in the URL, and httpx logs each URL at INFO.
+        assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+        assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+    finally:
+        root.setLevel(saved[0])
+        root.handlers[:] = saved[1]
+        for name, level in saved[2].items():
+            logging.getLogger(name).setLevel(level)
+
+
+async def test_every_configured_channel_gets_its_notifier_primary_first() -> None:
+    settings = make_settings(**WHATSAPP, **TELEGRAM, notify_primary="telegram")
+    async with httpx.AsyncClient() as client:
+        channels = build_channels(settings, client)
+
+    assert [channel.name for channel in channels] == ["telegram", "email", "whatsapp"]
+    assert isinstance(channels[0], TelegramNotifier)

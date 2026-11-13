@@ -6,11 +6,14 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-Channel = Literal["email", "whatsapp"]
+Channel = Literal["email", "whatsapp", "telegram"]
 
 MAX_SEARCHES = 3
 # A number with country and area code (5511999999999), or a WhatsApp JID (contact or group).
 _WHATSAPP_TO = re.compile(r"^\d{10,15}$|^\d{10,15}@s\.whatsapp\.net$|^[\d-]+@g\.us$")
+# A private chat (positive) or a group (negative). A public @channel name is refused: alerts go to the author only.
+_TELEGRAM_CHAT_ID = re.compile(r"^-?\d{1,20}$")
+_TELEGRAM_TOKEN = re.compile(r"^\d+:[\w-]+$")
 # Plain http only where the traffic never leaves the machine or Railway's private network.
 _PLAIN_HTTP_HOSTS = {"localhost", "127.0.0.1"}
 _PRIVATE_HOST_SUFFIX = ".railway.internal"
@@ -43,6 +46,9 @@ class Settings(BaseSettings):
     evolution_instance: str = Field(default="")
     whatsapp_to: str = Field(default="")
 
+    telegram_bot_token: SecretStr = Field(default=SecretStr(""))
+    telegram_chat_id: str = Field(default="")
+
     notify_primary: Channel = Field(default="whatsapp")
 
     # Job assessment by an LLM with an OpenAI-compatible API (Groq by default). Off without a key.
@@ -55,7 +61,7 @@ class Settings(BaseSettings):
     resume_file: str = Field(default="")
     resume_yaml: SecretStr = Field(default=SecretStr(""))
 
-    @field_validator("resend_api_key", "evolution_api_key", "llm_api_key", mode="before")
+    @field_validator("resend_api_key", "evolution_api_key", "llm_api_key", "telegram_bot_token", mode="before")
     @classmethod
     def _strip_secret(cls, v: object) -> object:
         # Values pasted from a dashboard often carry a stray space or newline.
@@ -101,6 +107,21 @@ class Settings(BaseSettings):
             raise ValueError("must be a number with country and area code (5511999999999) or a group id (...@g.us)")
         return v
 
+    @field_validator("telegram_bot_token")
+    @classmethod
+    def _telegram_token(cls, v: SecretStr) -> SecretStr:
+        if v.get_secret_value() and not _TELEGRAM_TOKEN.match(v.get_secret_value()):
+            raise ValueError("must be the token from @BotFather (digits, a colon, then letters)")
+        return v
+
+    @field_validator("telegram_chat_id")
+    @classmethod
+    def _telegram_chat_id(cls, v: str) -> str:
+        v = v.strip()
+        if v and not _TELEGRAM_CHAT_ID.match(v):
+            raise ValueError("must be the numeric chat id (message.chat.id from getUpdates), not a @name")
+        return v
+
     @model_validator(mode="after")
     def _channels_complete(self) -> Self:
         required = {
@@ -110,6 +131,10 @@ class Settings(BaseSettings):
                 "EVOLUTION_API_KEY": self.evolution_api_key.get_secret_value(),
                 "EVOLUTION_INSTANCE": self.evolution_instance,
                 "WHATSAPP_TO": self.whatsapp_to,
+            },
+            "telegram": {
+                "TELEGRAM_BOT_TOKEN": self.telegram_bot_token.get_secret_value(),
+                "TELEGRAM_CHAT_ID": self.telegram_chat_id,
             },
         }
         resume_sources = sum(map(bool, (self.resume_file, self.resume_yaml.get_secret_value())))
@@ -124,7 +149,8 @@ class Settings(BaseSettings):
         if not self.channels:
             raise ValueError(
                 "configure at least one channel: RESEND_API_KEY + EMAIL_TO, or "
-                "EVOLUTION_API_URL + EVOLUTION_API_KEY + EVOLUTION_INSTANCE + WHATSAPP_TO"
+                "EVOLUTION_API_URL + EVOLUTION_API_KEY + EVOLUTION_INSTANCE + WHATSAPP_TO, or "
+                "TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID"
             )
         return self
 
@@ -140,6 +166,8 @@ class Settings(BaseSettings):
             configured.append("email")
         if self.evolution_api_url and self.evolution_api_key.get_secret_value() and self.whatsapp_to:
             configured.append("whatsapp")
+        if self.telegram_bot_token.get_secret_value() and self.telegram_chat_id:
+            configured.append("telegram")
         return sorted(configured, key=lambda name: name != self.notify_primary)
 
     @property

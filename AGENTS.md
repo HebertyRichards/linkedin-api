@@ -4,7 +4,7 @@ Guide for AI agents (and humans) working in this repository. **These rules take 
 default behavior.** Goal: small changes in the style of the existing code, without overengineering.
 
 A single-process asyncio **worker**: it polls LinkedIn's public job search, keeps the new Easy Apply jobs and
-alerts by email (Resend) or WhatsApp (Evolution API). No HTTP server and no database. The decisions and
+alerts by email (Resend), WhatsApp (Evolution API) or Telegram (Bot API). No HTTP server and no database. The decisions and
 their sources are in [SCOPE.md](SCOPE.md).
 
 ## Non-negotiable principles
@@ -21,7 +21,9 @@ their sources are in [SCOPE.md](SCOPE.md).
 6. **Source data is untrusted.** It crosses `schemas/job.py` before anything else. Links are rebuilt from the
    id, never copied.
 7. **Never log in to LinkedIn and never send cookies.** No browser automation, no applying for jobs.
-8. **WhatsApp sends only to `WHATSAPP_TO`.** Nothing reads contacts or replies to messages.
+8. **WhatsApp sends only to `WHATSAPP_TO`, Telegram only to `TELEGRAM_CHAT_ID`.** Nothing reads contacts,
+   bot updates or replies to messages. The Telegram token sits in the request URL: never log a URL or `str()`
+   of an httpx error.
 9. **No dead code, no duplication.** Look for an existing helper before writing a new one.
 10. **No overengineering.** Implement what was asked.
 
@@ -35,7 +37,7 @@ app/
   schemas/job.py           # Job, JobDetails, Assessment: the boundary for source and LLM data
   schemas/resume.py        # resume YAML without the contact block (the only part an LLM sees)
   sources/                 # JobSource protocol + linkedin_guest (parser of the public search page)
-  channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution)
+  channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution) + telegram (Bot API)
   services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
                            # llm (chat client, one breaker per model), assessor (job score),
                            # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render)

@@ -166,6 +166,10 @@ def _filename(job: Job) -> str:
     return f"Curriculo-{slug}.pdf"
 
 
+def _label(job: Job) -> str:
+    return f"Currículo para: {job.title}" + (f" · {job.company}" if job.company else "")
+
+
 class ResumeTailor:
     """Builds the resume for one job and its PDF. Never raises: any failure is None (the email goes
     without the attachment)."""
@@ -207,7 +211,8 @@ class ResumeTailor:
             # A render bug must not fail the cycle: the job would be retried, and fail, every cycle.
             logger.exception("Tailored PDF of %s could not be rendered", job.key)
             return None
-        result = TailoredFile(resume=tailored, attachment=Attachment(filename=_filename(job), content=pdf))
+        attachment = Attachment(filename=_filename(job), content=pdf, label=_label(job))
+        result = TailoredFile(resume=tailored, attachment=attachment)
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = result

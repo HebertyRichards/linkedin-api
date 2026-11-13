@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config.settings import get_settings
-from tests.helpers import WHATSAPP, make_settings
+from tests.helpers import TELEGRAM, TELEGRAM_TOKEN, WHATSAPP, make_settings
 
 
 def test_email_alone_is_enough() -> None:
@@ -24,6 +24,37 @@ def test_incomplete_channel_names_what_is_missing() -> None:
     partial = {key: value for key, value in WHATSAPP.items() if key != "evolution_instance"}
     with pytest.raises(ValidationError, match="whatsapp channel is incomplete, missing: EVOLUTION_INSTANCE"):
         make_settings(**partial)
+
+
+def test_telegram_alone_is_enough() -> None:
+    assert make_settings(**TELEGRAM, resend_api_key="", email_to="").channels == ["telegram"]
+
+
+def test_all_three_channels_keep_their_order_after_the_primary() -> None:
+    assert make_settings(**WHATSAPP, **TELEGRAM).channels == ["whatsapp", "email", "telegram"]
+    assert make_settings(**WHATSAPP, **TELEGRAM, notify_primary="telegram").channels == [
+        "telegram",
+        "email",
+        "whatsapp",
+    ]
+
+
+def test_incomplete_telegram_names_what_is_missing() -> None:
+    with pytest.raises(ValidationError, match="telegram channel is incomplete, missing: TELEGRAM_CHAT_ID"):
+        make_settings(telegram_bot_token=TELEGRAM_TOKEN)
+
+
+@pytest.mark.parametrize("chat_id", ["@meu_canal", "https://t.me/x", "12 34"])
+def test_telegram_chat_id_must_be_numeric(chat_id: str) -> None:
+    with pytest.raises(ValidationError, match="numeric chat id"):
+        make_settings(**{**TELEGRAM, "telegram_chat_id": chat_id})
+    assert make_settings(**{**TELEGRAM, "telegram_chat_id": " -1001234567890 "}).telegram_chat_id == "-1001234567890"
+
+
+def test_malformed_telegram_token_is_refused_without_echoing_it() -> None:
+    with pytest.raises(ValidationError, match="@BotFather") as error:
+        make_settings(**{**TELEGRAM, "telegram_bot_token": "not-a-token-value"})
+    assert "not-a-token-value" not in str(error.value)
 
 
 def test_no_channel_is_an_error() -> None:

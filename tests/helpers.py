@@ -16,6 +16,9 @@ WHATSAPP: dict[str, object] = {
     "evolution_instance": "job-alerts",
     "whatsapp_to": "5511999999999",
 }
+# Made-up token in the BotFather format.
+TELEGRAM_TOKEN = "123456789:AAFakeTokenForTestsOnly_abcdefghij"  # secrets-ok gitleaks:allow
+TELEGRAM: dict[str, object] = {"telegram_bot_token": TELEGRAM_TOKEN, "telegram_chat_id": "987654321"}
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -161,7 +164,8 @@ class FakeTailor:
         if self._down:
             return None
         resume = TailoredResume(resumo="Resumo ajustado.", experiencias=[], projetos=[], habilidades=["Go"])
-        return TailoredFile(resume=resume, attachment=Attachment(f"Curriculo-{job.id}.pdf", b"%PDF-fake"))
+        attachment = Attachment(f"Curriculo-{job.id}.pdf", b"%PDF-fake", f"Currículo para: {job.title}")
+        return TailoredFile(resume=resume, attachment=attachment)
 
 
 class FakeNotifier:

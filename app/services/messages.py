@@ -79,6 +79,23 @@ def _card(job: Job, assessment: Assessment | None, tailored: TailoredFile | None
     )
 
 
+def _tg(text: str) -> str:
+    # Telegram knows only &lt; &gt; &amp; &quot;: the &#x27; that escape() writes for ' is a 400.
+    return escape(text, quote=False)
+
+
+def _telegram_block(job: Job, assessment: Assessment | None, tailored: TailoredFile | None, ai_on: bool) -> str:
+    href = _tg(job.url).replace('"', "&quot;")
+    lines = (
+        f"<b>{_tg(job.title)}</b>",
+        _tg(_details(job)),
+        *map(_tg, _score_lines(assessment, ai_on)),
+        *map(_tg, _resume_lines(tailored, assessment, ai_on)),
+        f'<a href="{href}">Ver vaga e se candidatar</a>',
+    )
+    return "\n".join(line for line in lines if line)
+
+
 def job_message(
     jobs: Sequence[Job],
     assessments: Mapping[str, Assessment] | None = None,
@@ -127,6 +144,10 @@ def job_message(
         text=text,
         html=f'<h2 style="font-family:Arial,sans-serif">{heading}</h2>'
         + "".join(_card(job, scores.get(job.key), files.get(job.key), ai_on) for job in jobs),
+        telegram_blocks=(
+            f"<b>{heading}</b>",
+            *(_telegram_block(job, scores.get(job.key), files.get(job.key), ai_on) for job in jobs),
+        ),
         idempotency_key=f"jobs-{fingerprint.hexdigest()[:32]}",
         keys=keys,
         attachments=attachments,
@@ -143,6 +164,7 @@ def source_down_message(since: datetime) -> Message:
         subject="Alerta: busca de vagas falhando",
         text=f"*Alerta do linkedin-api*\n\n{text}",
         html=f"<h2>Alerta do linkedin-api</h2><p>{escape(text)}</p>",
+        telegram_blocks=("<b>Alerta do linkedin-api</b>", _tg(text)),
         idempotency_key=f"source-down-{int(since.timestamp())}",
         keys=(),
     )

@@ -9,6 +9,7 @@ import httpx
 
 from app.channels.base import Notifier
 from app.channels.email import EmailNotifier
+from app.channels.telegram import TelegramNotifier
 from app.channels.whatsapp import WhatsAppNotifier
 from app.config.logging_config import setup_logging
 from app.config.settings import Settings, get_settings
@@ -26,10 +27,8 @@ logger = logging.getLogger("app")
 
 
 def build_channels(settings: Settings, client: httpx.AsyncClient) -> list[Notifier]:
-    channels: list[Notifier] = []
-    for name in settings.channels:
-        channels.append(EmailNotifier(client, settings) if name == "email" else WhatsAppNotifier(client, settings))
-    return channels
+    notifiers = {"email": EmailNotifier, "whatsapp": WhatsAppNotifier, "telegram": TelegramNotifier}
+    return [notifiers[name](client, settings) for name in settings.channels]
 
 
 def _stop_on_signals(stop: asyncio.Event) -> None:
