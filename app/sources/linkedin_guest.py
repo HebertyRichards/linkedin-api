@@ -26,18 +26,18 @@ _TIMEOUT_SECONDS = 10.0
 _BLOCKED_STATUS = {429, 999}
 _URN_PREFIX = "urn:li:jobPosting:"
 _HEADERS = {"User-Agent": "linkedin-api-job-alert/0.1", "Accept": "text/html"}
-# CSS class on a card element -> Job field, as observed on the live page.
 _FIELDS = {
     "base-search-card__title": "title",
     "base-search-card__subtitle": "company",
     "job-search-card__location": "location",
 }
 _FIELD_TAGS = frozenset({"h3", "h4", "span"})
-# Job page, as observed on the live page (2026-11-12): the description and the criteria list.
 _DESCRIPTION_CLASS = "show-more-less-html__markup"
 _CRITERIA_LABEL_CLASS = "description__job-criteria-subheader"
 _CRITERIA_VALUE_CLASS = "description__job-criteria-text"
 _CRITERIA = {"Seniority level": "seniority", "Employment type": "employment_type"}
+_CLOSED_CLASS = "closed-job__flavor--closed"
+_REMOVED = JobDetails(description="Vaga removida do LinkedIn.", closed=True)
 # Block tags end a line, so words of two paragraphs do not run together.
 _BLOCK_TAGS = frozenset({"p", "li", "br", "div", "ul", "ol", "h1", "h2", "h3", "h4"})
 
@@ -83,12 +83,15 @@ class _DetailParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.description: list[str] = []
         self.criteria: dict[str, str] = {}
+        self.closed = False
         self._description_depth = 0  # >0 while inside the description element
         self._label: str | None = None
         self._capture: str | None = None  # "label" or "value" while inside a criteria element
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         classes = (dict(attrs).get("class") or "").split()
+        if _CLOSED_CLASS in classes:
+            self.closed = True
         if self._description_depth:
             if tag == "div":
                 self._description_depth += 1
@@ -127,7 +130,9 @@ def parse_details(html: str) -> JobDetails:
     parser.close()
     lines = (" ".join(line.split()) for line in "".join(parser.description).splitlines())
     try:
-        return JobDetails(description="\n".join(line for line in lines if line), **parser.criteria)
+        return JobDetails(
+            description="\n".join(line for line in lines if line), closed=parser.closed, **parser.criteria
+        )
     except ValidationError:
         raise SourceUnavailableError("job page without a description: markup changed or a challenge page") from None
 
@@ -200,6 +205,8 @@ class LinkedInGuestSource:
             retry_after = parse_retry_after(response.headers.get("retry-after"))
             self._breaker.trip(retry_after)
             raise SourceUnavailableError(f"blocked ({response.status_code})", blocked=True, retry_after=retry_after)
+        if response.status_code == 404:
+            return _REMOVED
         if response.status_code != 200:
             raise SourceUnavailableError(f"status {response.status_code}")
         return parse_details(response.text)

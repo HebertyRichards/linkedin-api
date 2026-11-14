@@ -44,6 +44,7 @@ class JobDetails(BaseModel):
     description: str = Field(min_length=1, max_length=MAX_DESCRIPTION)
     seniority: str = Field(default="", max_length=MAX_TEXT)
     employment_type: str = Field(default="", max_length=MAX_TEXT)
+    closed: bool = False
 
     @field_validator("description", mode="before")
     @classmethod

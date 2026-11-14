@@ -207,15 +207,16 @@ class Watcher:
     async def _assess(self, jobs: list[Job], now: datetime) -> _Batch:
         """Scores each job, best first; a score from TAILOR_MIN_SCORE up also gets the tailored resume.
 
-        On-site jobs are dropped and marked as seen: they never go out. When LinkedIn blocks the job pages,
-        the unscored jobs are held (not sent, not marked) once, so the next run can score them; held a second
-        time, they go out without a score. Any other failure (page broken, LLM down) sends them unscored.
+        On-site and closed jobs are dropped and marked as seen: they never go out. When LinkedIn blocks the job
+        pages, the unscored jobs are held (not sent, not marked) once, so the next run can score them; held a
+        second time, they go out without a score. Any other failure (page broken, LLM down) sends them unscored.
         """
         if self._assessor is None:
             return _Batch(jobs)
         scores: dict[str, Assessment] = {}
         tailored: dict[str, TailoredFile] = {}
         held: set[str] = set()
+        closed: set[str] = set()
         blocked = False
         fetched = 0
         for job in jobs:
@@ -231,6 +232,9 @@ class Watcher:
                     logger.warning("Job page of %s unavailable: %s", job.key, e)
                     blocked = e.blocked  # a block stops the job pages for the rest of this batch
                 else:
+                    if details.closed:
+                        closed.add(job.key)  # no score needed: it is dropped, so no quota spent
+                        continue
                     assessment = await self._assessor.assess(job, details)
             if assessment is not None:
                 scores[job.key] = assessment
@@ -240,13 +244,14 @@ class Watcher:
             elif blocked and job.key not in self._held:
                 held.add(job.key)
         onsite = {key for key, assessment in scores.items() if assessment.workplace == "onsite"}
-        if onsite:
-            self._store.mark(onsite, now)
+        dropped = onsite | closed
+        if dropped:
+            self._store.mark(dropped, now)
             await self._store.save()
-            logger.info("Dropped %d on-site job(s)", len(onsite))
+            logger.info("Dropped %d on-site and %d closed job(s)", len(onsite), len(closed))
         if held:
             logger.warning("Held %d job(s) until LinkedIn lets the job pages through", len(held))
-        kept = [job for job in jobs if job.key not in onsite | held]
+        kept = [job for job in jobs if job.key not in dropped | held]
         kept.sort(key=lambda job: scores[job.key].score if job.key in scores else -1, reverse=True)
         if len(self._held) > _HELD_LIMIT:
             self._held.clear()

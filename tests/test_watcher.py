@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
+from app.schemas.job import JobDetails
 from app.services.messages import AI_DOWN, RESUME_DOWN, job_message
 from app.services.watcher import excluded_terms, is_excluded
 from app.state.seen_store import SeenStore
@@ -382,3 +383,19 @@ async def test_jobs_with_a_not_term_in_the_title_never_go_out() -> None:
     await watcher.cycle()
 
     assert [message.keys for message in email.sent] == [(job(3).key,)]
+
+
+async def test_a_closed_job_is_dropped_before_the_ai_and_never_goes_out() -> None:
+    email = FakeNotifier("email")
+    closed = JobDetails(description="Vaga de Python.", closed=True)
+    source = FakeSource([[], [job(1)], [job(1)]], details=closed)
+    store = SeenStore(None)
+    watcher = make_watcher(source, [email], store=store, assessor=FakeAssessor({job(1).key: assessment(90)}))
+
+    await watcher.cycle()
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert email.sent == []
+    assert store.is_seen(job(1).key)
+    assert source.detail_calls == [job(1).key]  # marked as seen: its page is not read again

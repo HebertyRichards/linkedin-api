@@ -137,3 +137,19 @@ async def test_job_page_block_opens_the_circuit_for_the_search_too() -> None:
         assert blocked.value.blocked
         with pytest.raises(SourceUnavailableError, match="circuit open"):
             await source.fetch_recent("python", "Brazil", window_seconds=3600)
+
+
+def test_a_closed_job_page_says_so() -> None:
+    closed = (
+        '<figure class="closed-job closed-job__flavor topcard__flavor-row">'
+        '<figcaption class="closed-job__flavor--closed">No longer accepting applications</figcaption></figure>'
+        + JOB_PAGE
+    )
+    assert parse_details(closed).closed is True
+    assert parse_details(JOB_PAGE).closed is False
+
+
+async def test_a_removed_job_page_counts_as_closed() -> None:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(404))) as client:
+        details = await LinkedInGuestSource(client, page_delay=0).fetch_details(job(1))
+    assert details.closed is True
