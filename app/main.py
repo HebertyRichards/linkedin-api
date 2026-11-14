@@ -3,6 +3,7 @@ import contextlib
 import logging
 import signal
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -18,7 +19,7 @@ from app.services.assessor import JobAssessor
 from app.services.dispatcher import Dispatcher
 from app.services.llm import build_chats
 from app.services.tailor import ResumeTailor
-from app.services.watcher import INTERVAL_JITTER, Watcher
+from app.services.watcher import DIGEST_EVERY, INTERVAL_JITTER, Watcher
 from app.sources.linkedin_guest import LinkedInGuestSource
 from app.state.seen_store import SeenStore
 from app.utils.watchdog import Watchdog
@@ -39,7 +40,7 @@ def _stop_on_signals(stop: asyncio.Event) -> None:
             loop.add_signal_handler(sig, stop.set)
 
 
-async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None) -> None:
+async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
     store = SeenStore(Path(settings.state_file) if settings.state_file else None)
     store.load()
     stop = asyncio.Event()
@@ -61,16 +62,15 @@ async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None)
             heartbeat=watchdog.beat,
         )
         logger.info(
-            "Watching %d search(es) in '%s' every ~%ds; channels: %s; state: %s; assessment: %s",
+            "Watching %d search(es) in '%s' every ~%ds, any date every %dh; channels: %s; state: %s; score: %s",
             len(settings.searches),
             settings.job_location,
             settings.poll_interval_seconds,
+            DIGEST_EVERY // timedelta(hours=1),
             " -> ".join(settings.channels),
             "file" if settings.state_file else "memory only",
             f"{settings.llm_model} (resume: {settings.llm_tailor_model})"
-            + (f", fallback {settings.llm_fallback_model}" if settings.llm_fallback_enabled else "")
-            if profile
-            else "off",
+            + (f", fallback {settings.llm_fallback_model}" if settings.llm_fallback_enabled else ""),
         )
         watchdog.start()
         try:
@@ -95,10 +95,8 @@ def _profile(settings: Settings) -> tuple[Resume, Contact]:
 
 
 def _ai_services(
-    client: httpx.AsyncClient, settings: Settings, profile: tuple[Resume, Contact] | None
-) -> tuple[JobAssessor | None, ResumeTailor | None]:
-    if profile is None:
-        return None, None
+    client: httpx.AsyncClient, settings: Settings, profile: tuple[Resume, Contact]
+) -> tuple[JobAssessor, ResumeTailor]:
     resume, contact = profile
     score, tailor = build_chats(client, settings)
     return JobAssessor(score, resume), ResumeTailor(tailor, resume, contact)
@@ -108,7 +106,7 @@ def main() -> None:
     try:
         settings = get_settings()
         # Read before anything starts: a broken resume stops the boot instead of failing every job.
-        profile = _profile(settings) if settings.assessment_enabled else None
+        profile = _profile(settings)
     except RuntimeError as e:
         sys.exit(str(e))
     setup_logging(settings.log_level, json_logs=settings.log_json or settings.is_production)

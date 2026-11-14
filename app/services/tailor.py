@@ -18,8 +18,8 @@ from app.services.resume_pdf import render_pdf
 
 logger = logging.getLogger(__name__)
 
-# A score from this one up gets a resume tailored to the job, attached to the email as a PDF.
-TAILOR_MIN_SCORE = 50
+# Only a job scored this or more goes out (any channel), with a resume tailored to it attached as a PDF.
+MIN_SCORE = 50
 _MAX_PER_EXPERIENCE = 6
 _MAX_SUMMARY = 600
 # A tailored PDF is ~5 KB; kept for jobs still pending so a retry sends the same file without a new LLM call.

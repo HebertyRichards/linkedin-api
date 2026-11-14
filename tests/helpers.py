@@ -48,6 +48,8 @@ def make_settings(**overrides: object) -> Settings:
         "job_location": "Brazil",
         "resend_api_key": "re_test_key",
         "email_to": "me@example.com",
+        "llm_api_key": "gsk_test_key",
+        "resume_file": "curriculo.yaml",
         **overrides,
     }
     return Settings.model_validate(values)
@@ -127,7 +129,7 @@ def assessment(score: int, workplace: Workplace = "remote") -> Assessment:
 
 
 class FakeSource:
-    """Answers each fetch with the next scripted result; job pages with `details`."""
+    """Answers each fetch with the next scripted result; job pages with `details` (public: a test may swap it)."""
 
     def __init__(
         self,
@@ -135,18 +137,18 @@ class FakeSource:
         details: JobDetails | SourceUnavailableError = DETAILS,
     ) -> None:
         self._results = results
-        self._details = details
+        self.details = details
         self.calls = 0
-        self.windows: list[int] = []
+        self.windows: list[int | None] = []
         self.detail_calls: list[str] = []
 
     async def fetch_details(self, job: Job) -> JobDetails:
         self.detail_calls.append(job.key)
-        if isinstance(self._details, SourceUnavailableError):
-            raise self._details
-        return self._details
+        if isinstance(self.details, SourceUnavailableError):
+            raise self.details
+        return self.details
 
-    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int) -> list[Job]:
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
         result = self._results[min(self.calls, len(self._results) - 1)]
         self.calls += 1
         self.windows.append(window_seconds)
@@ -156,17 +158,23 @@ class FakeSource:
 
 
 class FakeAssessor:
-    """Scores from a table by job key; a key missing from the table is a job that could not be scored."""
+    """Scores from a table by job key; a key missing from the table gets `default` (None: could not be scored)."""
 
-    def __init__(self, scores: dict[str, Assessment], cache: dict[str, Assessment] | None = None) -> None:
+    def __init__(
+        self,
+        scores: dict[str, Assessment],
+        cache: dict[str, Assessment] | None = None,
+        default: Assessment | None = None,
+    ) -> None:
         self._scores = scores
         self._cache = cache or {}
+        self._default = default
 
     def cached(self, job: Job) -> Assessment | None:
         return self._cache.get(job.key)
 
     async def assess(self, job: Job, details: JobDetails) -> Assessment | None:
-        return self._scores.get(job.key)
+        return self._scores.get(job.key, self._default)
 
 
 class FakeTailor:
@@ -221,6 +229,7 @@ def make_watcher(
     assessor: FakeAssessor | None = None,
     tailor: FakeTailor | None = None,
 ) -> Watcher:
+    """Without an assessor every job scores 80: it goes out."""
     return Watcher(
         source=source,
         dispatcher=Dispatcher(channels),
@@ -231,6 +240,6 @@ def make_watcher(
         search_spacing=(0.0, 0.0),
         job_page_spacing=(0.0, 0.0),
         clock=clock or Clock(),
-        assessor=assessor,
+        assessor=assessor or FakeAssessor({}, default=assessment(80)),
         tailor=tailor,
     )

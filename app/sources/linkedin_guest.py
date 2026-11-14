@@ -177,7 +177,7 @@ class LinkedInGuestSource:
             failure_threshold=3, recovery_timeout=300.0, max_recovery_timeout=3600.0, name="linkedin"
         )
 
-    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int) -> list[Job]:
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
         # Results are not sorted by date, so the whole window is read instead of only the first page.
         if not self._breaker.allow():
             raise SourceUnavailableError("circuit open", blocked=True)
@@ -212,15 +212,11 @@ class LinkedInGuestSource:
         return parse_details(response.text)
 
     async def _fetch_page(
-        self, keywords: str, location: str, window_seconds: int, *, start: int
+        self, keywords: str, location: str, window_seconds: int | None, *, start: int
     ) -> tuple[list[Job], int]:
-        params = {
-            "keywords": keywords,
-            "location": location,
-            "f_AL": "true",
-            "f_TPR": f"r{window_seconds}",
-            "start": str(start),
-        }
+        params = {"keywords": keywords, "location": location, "f_AL": "true", "start": str(start)}
+        if window_seconds is not None:
+            params["f_TPR"] = f"r{window_seconds}"
         try:
             response = await self._client.get(SEARCH_URL, params=params, headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
         except httpx.HTTPError as e:

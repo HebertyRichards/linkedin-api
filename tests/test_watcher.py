@@ -6,10 +6,11 @@ import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
 from app.schemas.job import JobDetails
-from app.services.messages import AI_DOWN, RESUME_DOWN, job_message
+from app.services.messages import RESUME_DOWN, job_message
 from app.services.watcher import excluded_terms, is_excluded
 from app.state.seen_store import SeenStore
 from tests.helpers import (
+    DETAILS,
     Clock,
     FakeAssessor,
     FakeNotifier,
@@ -136,28 +137,34 @@ async def test_state_file_survives_a_restart(tmp_path: Path) -> None:
     assert "Python Developer" not in path.read_text(encoding="utf-8")
 
 
-async def test_digest_runs_at_boot_with_up_to_10_unseen_jobs_from_the_last_3_days() -> None:
+async def test_digest_skips_the_boot_then_scores_up_to_10_unseen_jobs_of_any_date() -> None:
     email = FakeNotifier("email")
+    clock = Clock()
     source = FakeSource([[job(n) for n in range(12)]])
     store = SeenStore(None)
     store.mark([job(0).key], datetime(2026, 10, 25, tzinfo=UTC))
-    watcher = make_watcher(source, [email], store=store)
+    watcher = make_watcher(source, [email], store=store, clock=clock)
 
+    await watcher.digest_if_due()  # just deployed: nothing runs
+    assert source.calls == 0
+
+    clock.advance(minutes=360)
     await watcher.digest_if_due()
 
-    assert source.windows == [3 * 86400]
+    assert source.windows == [None]
     assert [message.keys for message in email.sent] == [tuple(job(n).key for n in range(1, 11))]
     assert store.is_seen(job(10).key)
     assert not store.is_seen(job(11).key)
 
 
-async def test_digest_waits_four_hours_and_sends_only_what_is_still_unseen() -> None:
+async def test_digest_runs_every_six_hours_and_sends_only_what_is_still_unseen() -> None:
     email = FakeNotifier("email")
     clock = Clock()
     watcher = make_watcher(FakeSource([[job(1)], [job(1), job(2)]]), [email], clock=clock)
 
+    clock.advance(minutes=360)
     await watcher.digest_if_due()
-    clock.advance(minutes=239)
+    clock.advance(minutes=359)
     await watcher.digest_if_due()
     assert len(email.sent) == 1
 
@@ -168,13 +175,33 @@ async def test_digest_waits_four_hours_and_sends_only_what_is_still_unseen() -> 
 
 async def test_digest_stays_due_when_delivery_fails() -> None:
     email = FakeNotifier("email", fail_with=ChannelUnavailableError("circuit open"))
-    watcher = make_watcher(FakeSource([[job(1)]]), [email])
+    clock = Clock()
+    watcher = make_watcher(FakeSource([[job(1)]]), [email], clock=clock)
 
+    clock.advance(minutes=360)
     await watcher.digest_if_due()
     email.fail_with = None
     await watcher.digest_if_due()
 
     assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_digest_with_nothing_from_50_up_sends_no_message() -> None:
+    email = FakeNotifier("email")
+    clock = Clock()
+    store = SeenStore(None)
+    source = FakeSource([[job(1), job(2)]])
+    scores = {job(1).key: assessment(49), job(2).key: assessment(30)}
+    watcher = make_watcher(source, [email], store=store, clock=clock, assessor=FakeAssessor(scores))
+
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+
+    assert email.sent == []
+    assert store.is_seen(job(1).key) and store.is_seen(job(2).key)
+    assert source.detail_calls == [job(1).key, job(2).key]  # scored once: marked, never scored again
 
 
 async def test_cycle_reads_the_last_hour() -> None:
@@ -191,11 +218,11 @@ def test_unreadable_state_file_starts_clean(tmp_path: Path) -> None:
     assert not store.is_seen(job(1).key)
 
 
-def test_prune_drops_keys_older_than_30_days() -> None:
+def test_prune_drops_keys_older_than_a_year() -> None:
     now = datetime(2026, 10, 25, tzinfo=UTC)
     store = SeenStore(None)
-    store.mark([job(1).key], now - timedelta(days=31))
-    store.mark([job(2).key], now)
+    store.mark([job(1).key], now - timedelta(days=366))
+    store.mark([job(2).key], now - timedelta(days=364))
     assert store.prune(now)
     assert not store.is_seen(job(1).key)
     assert store.is_seen(job(2).key)
@@ -209,37 +236,59 @@ def test_message_is_stable_escaped_and_links_by_id() -> None:
     assert risky.url in first.text
 
 
-async def test_scored_jobs_go_out_best_first_and_on_site_ones_never() -> None:
+async def test_only_jobs_from_50_up_go_out_best_first_and_on_site_ones_never() -> None:
     email = FakeNotifier("email")
     store = SeenStore(None)
-    scores = {job(1).key: assessment(55), job(2).key: assessment(90, "onsite"), job(3).key: assessment(82)}
-    # job(4) has no score (LLM down or quota used up): it still goes out, last.
+    scores = {
+        job(1).key: assessment(55),
+        job(2).key: assessment(90, "onsite"),
+        job(3).key: assessment(82),
+        job(4).key: assessment(49),
+    }
+    # job(5) has no score (LLM down or quota used up): it waits, neither sent nor marked.
     watcher = make_watcher(
-        FakeSource([[], [job(n) for n in range(1, 5)]]), [email], store=store, assessor=FakeAssessor(scores)
+        FakeSource([[], [job(n) for n in range(1, 6)]]), [email], store=store, assessor=FakeAssessor(scores)
     )
 
     await watcher.cycle()
     await watcher.cycle()
 
     # Up to 3 jobs go out one message each, the best score first.
-    assert [message.keys for message in email.sent] == [(job(3).key,), (job(1).key,), (job(4).key,)]
+    assert [message.keys for message in email.sent] == [(job(3).key,), (job(1).key,)]
     assert email.sent[0].subject.startswith("Nova vaga Easy Apply (82/100)")
     assert "Nota 82/100: Stack parecida." in email.sent[0].text
     assert "Falta: Kubernetes" in email.sent[0].text
-    assert store.is_seen(job(2).key)
+    assert store.is_seen(job(2).key) and store.is_seen(job(4).key)
+    assert not store.is_seen(job(5).key)
 
 
-async def test_job_page_down_still_sends_the_job_without_a_score() -> None:
+async def test_job_page_down_holds_the_job_until_it_can_be_scored() -> None:
     email = FakeNotifier("email")
+    store = SeenStore(None)
     source = FakeSource([[], [job(1)]], details=SourceUnavailableError("status 500"))
-    watcher = make_watcher(source, [email], assessor=FakeAssessor({job(1).key: assessment(80)}))
+    watcher = make_watcher(source, [email], store=store)
 
     await watcher.cycle()
     await watcher.cycle()
+    assert email.sent == []
+    assert not store.is_seen(job(1).key)
 
+    source.details = DETAILS
+    await watcher.cycle()
     assert [message.keys for message in email.sent] == [(job(1).key,)]
-    assert "Nota" not in email.sent[0].text
-    assert AI_DOWN in email.sent[0].text and AI_DOWN in email.sent[0].html
+    assert "Nota 80/100" in email.sent[0].text
+
+
+async def test_a_job_page_that_keeps_failing_is_given_up() -> None:
+    store = SeenStore(None)
+    source = FakeSource([[], [job(1)]], details=SourceUnavailableError("status 500"))
+    watcher = make_watcher(source, [FakeNotifier("email")], store=store)
+
+    for _ in range(5):
+        await watcher.cycle()
+
+    assert store.is_seen(job(1).key)
+    assert source.detail_calls == [job(1).key] * 3
 
 
 async def test_a_job_already_scored_skips_its_job_page() -> None:
@@ -254,19 +303,6 @@ async def test_a_job_already_scored_skips_its_job_page() -> None:
     assert source.detail_calls == []
 
 
-async def test_digest_scores_its_jobs_too() -> None:
-    email = FakeNotifier("email")
-    watcher = make_watcher(
-        FakeSource([[job(1), job(2)]]),
-        [email],
-        assessor=FakeAssessor({job(1).key: assessment(40), job(2).key: assessment(75)}),
-    )
-
-    await watcher.digest_if_due()
-
-    assert [message.keys for message in email.sent] == [(job(2).key, job(1).key)]
-
-
 def test_new_score_for_the_same_jobs_is_a_new_message_key() -> None:
     first = job_message([job(1)], {job(1).key: assessment(60)})
     rescored = job_message([job(1)], {job(1).key: assessment(70)})
@@ -274,7 +310,7 @@ def test_new_score_for_the_same_jobs_is_a_new_message_key() -> None:
     assert first.idempotency_key == job_message([job(1)], {job(1).key: assessment(60)}).idempotency_key
 
 
-async def test_blocked_job_page_holds_the_jobs_once_then_sends_them_without_a_score() -> None:
+async def test_a_blocked_job_page_never_sends_the_job_without_a_score() -> None:
     # Seen on Railway: LinkedIn answers 429 on the 2nd job page and the circuit opens for the rest.
     email = FakeNotifier("email")
     store = SeenStore(None)
@@ -282,29 +318,15 @@ async def test_blocked_job_page_holds_the_jobs_once_then_sends_them_without_a_sc
     source = FakeSource([[], [job(1), job(2)]], details=blocked)
     watcher = make_watcher(source, [email], store=store, assessor=FakeAssessor({job(1).key: assessment(90)}))
 
-    await watcher.cycle()
-    await watcher.cycle()
-    assert email.sent == []  # held: the next run scores them
-    assert not store.is_seen(job(1).key)
-    assert source.detail_calls == [job(1).key]  # a block stops the job pages for this batch
+    for _ in range(5):
+        await watcher.cycle()
 
-    await watcher.cycle()
-    assert [message.keys for message in email.sent] == [(job(1).key,), (job(2).key,)]
-    assert "Nota" not in email.sent[0].text
+    assert email.sent == []  # a block is not a broken page: the job waits however long it takes
+    assert not store.is_seen(job(1).key) and not store.is_seen(job(2).key)
+    assert source.detail_calls == [job(1).key] * 4  # a block stops the job pages for the rest of the batch
 
 
-async def test_digest_held_by_a_block_runs_again_on_the_next_loop() -> None:
-    email = FakeNotifier("email")
-    blocked = SourceUnavailableError("blocked (429)", blocked=True)
-    watcher = make_watcher(FakeSource([[job(1)]], details=blocked), [email], assessor=FakeAssessor({}))
-
-    await watcher.digest_if_due()
-    assert email.sent == []
-    await watcher.digest_if_due()  # same clock: still due because it held jobs
-    assert [message.keys for message in email.sent] == [(job(1).key,)]
-
-
-async def test_only_a_score_from_50_up_gets_the_tailored_resume_attached() -> None:
+async def test_every_job_sent_gets_its_tailored_resume() -> None:
     email = FakeNotifier("email")
     tailor = FakeTailor()
     scores = {job(1).key: assessment(50), job(2).key: assessment(49), job(3).key: assessment(95, "onsite")}
@@ -316,19 +338,16 @@ async def test_only_a_score_from_50_up_gets_the_tailored_resume_attached() -> No
     await watcher.cycle()
 
     assert tailor.calls == [job(1).key]
-    best, other = email.sent
-    assert [a.filename for a in best.attachments] == ["Curriculo-4400000001.pdf"]
-    assert "Currículo ajustado em anexo: Curriculo-4400000001.pdf" in best.text
-    assert "Resumo: Resumo ajustado." in best.text and "Currículo ajustado" in best.html
-    assert other.attachments == ()
-    assert "Currículo ajustado" not in other.text and AI_DOWN not in other.text
+    (sent,) = email.sent
+    assert [a.filename for a in sent.attachments] == ["Curriculo-4400000001.pdf"]
+    assert "Currículo ajustado em anexo: Curriculo-4400000001.pdf" in sent.text
+    assert "Resumo: Resumo ajustado." in sent.text and "Currículo ajustado" in sent.html
 
 
-async def test_llm_down_says_so_in_the_email_and_the_job_still_goes() -> None:
+async def test_resume_down_says_so_and_the_job_still_goes() -> None:
     email = FakeNotifier("email")
-    # job(1) scored but its resume failed; job(2) got no score at all.
     watcher = make_watcher(
-        FakeSource([[], [job(1), job(2)]]),
+        FakeSource([[], [job(1)]]),
         [email],
         assessor=FakeAssessor({job(1).key: assessment(70)}),
         tailor=FakeTailor(down=True),
@@ -337,19 +356,8 @@ async def test_llm_down_says_so_in_the_email_and_the_job_still_goes() -> None:
     await watcher.cycle()
     await watcher.cycle()
 
-    scored, unscored = email.sent
-    assert RESUME_DOWN in scored.text and scored.attachments == ()
-    assert AI_DOWN in unscored.text and RESUME_DOWN not in unscored.text
-
-
-async def test_without_ai_configured_there_is_no_down_notice() -> None:
-    email = FakeNotifier("email")
-    watcher = make_watcher(FakeSource([[], [job(1)]]), [email])
-
-    await watcher.cycle()
-    await watcher.cycle()
-
-    assert AI_DOWN not in email.sent[0].text
+    (sent,) = email.sent
+    assert RESUME_DOWN in sent.text and sent.attachments == ()
 
 
 def test_not_terms_are_read_with_quotes_and_without_accents() -> None:

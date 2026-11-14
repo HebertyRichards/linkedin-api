@@ -105,14 +105,14 @@ def test_startup_error_lists_names_but_never_values(monkeypatch: pytest.MonkeyPa
     assert "not an email" not in message
 
 
-def test_assessment_needs_key_and_resume_together() -> None:
-    assert not make_settings().assessment_enabled
-    assert make_settings(llm_api_key="gsk_x", resume_file="curriculo.yaml").assessment_enabled
-    assert make_settings(llm_api_key="gsk_x", resume_yaml="titulo: Dev").assessment_enabled
+def test_the_score_is_required_key_and_resume_together() -> None:
+    assert make_settings(resume_file="", resume_yaml="titulo: Dev").llm_api_key.get_secret_value()
     with pytest.raises(ValidationError, match="needs LLM_API_KEY and a resume"):
-        make_settings(llm_api_key="gsk_x")
+        make_settings(resume_file="")
+    with pytest.raises(ValidationError, match="needs LLM_API_KEY and a resume"):
+        make_settings(llm_api_key="")
     with pytest.raises(ValidationError, match="RESUME_FILE or RESUME_YAML, not both"):
-        make_settings(llm_api_key="gsk_x", resume_file="curriculo.yaml", resume_yaml="titulo: Dev")
+        make_settings(resume_yaml="titulo: Dev")
 
 
 def test_resume_yaml_never_shows_in_errors() -> None:
@@ -127,14 +127,11 @@ def test_llm_url_must_be_https_except_on_this_machine() -> None:
         make_settings(llm_api_url="http://api.example.com/v1")
 
 
-def test_llm_fallback_is_all_or_nothing_and_needs_the_primary() -> None:
-    llm = {"llm_api_key": "gsk_test_key", "resume_file": "curriculo.yaml"}
-    assert make_settings(**llm, **FALLBACK).llm_fallback_enabled
-    assert not make_settings(**llm).llm_fallback_enabled
+def test_llm_fallback_is_all_or_nothing() -> None:
+    assert make_settings(**FALLBACK).llm_fallback_enabled
+    assert not make_settings().llm_fallback_enabled
     with pytest.raises(ValidationError, match="LLM fallback is incomplete, missing: LLM_FALLBACK_MODEL"):
-        make_settings(**llm, **{**FALLBACK, "llm_fallback_model": ""})
-    with pytest.raises(ValidationError, match="backs up LLM_API_KEY"):
-        make_settings(**FALLBACK)
+        make_settings(**{**FALLBACK, "llm_fallback_model": ""})
     with pytest.raises(ValidationError, match="must start with https") as error:
-        make_settings(**llm, **{**FALLBACK, "llm_fallback_api_url": "http://api.example.com/v1"})
+        make_settings(**{**FALLBACK, "llm_fallback_api_url": "http://api.example.com/v1"})
     assert "sk-or-test-key" not in str(error.value)

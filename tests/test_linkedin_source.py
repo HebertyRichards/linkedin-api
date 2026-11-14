@@ -36,6 +36,20 @@ async def test_reads_every_page_of_the_window_until_a_short_page() -> None:
     assert "cookie" not in requests[0].headers
 
 
+async def test_no_window_searches_jobs_of_any_date() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, text=card("5000"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil", window_seconds=None)
+
+    assert "f_TPR" not in requests[0].url.params
+    assert requests[0].url.params["f_AL"] == "true"
+
+
 async def test_block_answer_opens_the_circuit() -> None:
     requests: list[httpx.Request] = []
 

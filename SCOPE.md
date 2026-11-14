@@ -199,9 +199,10 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
   `contato` nunca é lido pelo código que monta o prompt.
 - **A resposta da IA é dado não confiável:** JSON com schema estrito no pedido e validação no
   `schemas/job.py`, com limite de tamanho, igual ao dado da fonte.
-- **Falha segura para o alerta:** IA fora, cota esgotada (429 abre o breaker pelo `Retry-After`) ou página
-  da vaga indisponível: a vaga vai sem nota, nunca fica presa, e o email avisa "Análise da vaga fora do ar
-  no momento" (ou "Currículo ajustado indisponível" quando só o currículo falhou).
+- **Sem nota, a vaga espera (mudou em 2026-11-14, ver D6):** IA fora, cota esgotada (429 abre o breaker
+  pelo `Retry-After`) ou página da vaga indisponível: a vaga não sai nem é marcada, e o próximo ciclo ou
+  resumo dá a nota. Página que falha 3 vezes sem bloqueio (quebrada) é desistida e marcada. Quando só o
+  currículo falha, a vaga sai com "Currículo ajustado indisponível". Antes, a vaga ia sem nota.
 - **Observado (2026-11-12):** o filtro `f_WT` (presencial/remoto) não tem efeito no `jobs-guest`, e a página
   da vaga não traz o modelo de trabalho num campo próprio. Por isso quem classifica é a IA, lendo a descrição.
 - **Versão não é falta:** antes de ir para a IA, o número de versão some das tecnologias que o currículo já
@@ -284,6 +285,21 @@ o PDF do currículo ajustado chegam numa conversa com um robô seu.
 - **Fora do escopo:** comandos no robô (`/pausar`, botões), resposta a mensagens e qualquer leitura de
   updates. Tudo isso exigiria ler mensagens de qualquer pessoa que achar o robô.
 
+### D6. Só vaga com nota 50 ou mais (2026-11-14, pedido do autor)
+
+Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
+- **O ciclo de 30 min manda só nota 50 ou mais,** pelos três canais (email, WhatsApp, Telegram). Abaixo de
+  50 a vaga é marcada como vista e nunca sai, para não gastar cota com ela de novo.
+- **O resumo passa a cada 6h e lê vagas de qualquer data** (sem `f_TPR`): lista o que bate com o currículo,
+  seja a vaga de um dia ou de um ano. Nenhuma com 50 ou mais: nenhuma mensagem.
+- **O resumo não roda no deploy:** o primeiro sai 6h depois do boot. Custo: cada deploy zera esse relógio;
+  deploys com menos de 6h de intervalo adiam o resumo.
+- **IA obrigatória:** sem `LLM_API_KEY` e currículo o worker não sobe, porque sem nota não há o que mandar.
+- **Os ids vistos ficam 1 ano** (eram 30 dias): com vagas de qualquer data, 30 dias faria vaga antiga
+  voltar, ganhar nota e ser enviada de novo. Um ano de ids fica bem abaixo de 1 MB.
+- **Custo de cota:** cada resumo dá nota a no máximo 10 vagas; com a maioria abaixo de 50, um resumo pode
+  não mandar nada e ainda assim gastar 10 notas. O acervo antigo vai sendo coberto aos poucos, 10 por vez.
+
 ---
 
 ## 3. Como funciona
@@ -293,21 +309,22 @@ boot ─► valida env (falha listando só NOMES) ─► carrega STATE_FILE (se 
   │
   └─ estado vazio? ─► BASELINE: busca, marca tudo como visto, não envia nada
   │
-no boot e depois a cada 4h: resumo com até 10 vagas dos últimos 3 dias, nunca mais antigas (f_TPR=r259200) ainda não enviadas,
-  numa mensagem só; pega as vagas que entraram na busca depois da janela de 1h do ciclo
+a cada 6h, nunca no boot: resumo das vagas de qualquer data (sem f_TPR, até 3 páginas); dá nota a até 10
+  ainda não vistas e manda numa mensagem só as de nota 50 ou mais; nenhuma: não manda nada
 loop a cada POLL_INTERVAL_SECONDS ±20% (o próximo ciclo só começa quando o atual termina):
   1. para cada busca (no máximo 3):
        breaker da fonte aberto? → pula
        lê a janela da última hora (f_AL=true, f_TPR=r3600), até 3 páginas
        → valida cada item no schema (o inválido é descartado) → novas = id não visto
-  2. novas? → uma mensagem por vaga; se vierem mais de 3 no mesmo ciclo, junta numa só (até 10 por mensagem)
+  2. novas? → nota de cada uma; abaixo de 50, presencial ou encerrada → marca como vista e não envia
+     nota 50 ou mais → uma mensagem por vaga; mais de 3 no mesmo ciclo vão juntas (até 10 por mensagem)
   3. despacho:
        canal principal (NOTIFY_PRIMARY) ─ falhou ou breaker aberto ─► canal reserva
        WhatsApp: antes de enviar, consulta GET /instance/connectionState/{instance};
                  se não estiver "open", pula direto para o email [V]
        aceito (2xx) → marca os ids como vistos → grava STATE_FILE (escreve num temp e renomeia)
        os dois falharam → NÃO marca; loga NOTIFY_FAILED; o próximo ciclo tenta de novo
-  4. remove do estado os ids com mais de 30 dias
+  4. remove do estado os ids com mais de 1 ano (o resumo lê vagas de qualquer data)
 SIGTERM ─► termina o envio em curso, grava o estado, fecha os clientes HTTP
 ```
 
@@ -331,7 +348,7 @@ voltar. Sem isso, um bloqueio passaria em silêncio. Conta como falha também um
 mas sem card reconhecido (layout mudou ou página de verificação). Uma busca sem resultado volta sem
 nenhuma tag (`<!DOCTYPE html><!---->`, observado em 2026-10-29) e continua sendo "0 vagas". O ciclo
 grava `Cycle done: ...` em INFO só quando achou vaga ou alguma busca falhou; o ciclo sem novidade vai em
-DEBUG, e a linha `Digest done` a cada 4h mostra que o worker está vivo. Era 10 minutos e uma linha por
+DEBUG, e a linha `Digest done` a cada 6h mostra que o worker está vivo. Era 10 minutos e uma linha por
 ciclo; mudou em 2026-11-12, porque os 429 do IP do Railway somem sozinhos em 15-30 min e o resumo de 3
 dias recupera o que passou: o aviso virava ruído.
 
@@ -600,6 +617,11 @@ Os comentários ficam em inglês e enxutos.
 - **Boot:**
   - [ ] Boot sem canal completo encerra com erro listando só nomes de variáveis.
   - [ ] Primeiro ciclo com estado vazio não envia nada (baseline).
+  - [ ] Boot sem `LLM_API_KEY` ou sem currículo encerra com erro.
+  - [ ] Nenhum resumo sai nas primeiras 6h depois do deploy.
+- **Nota (D6):**
+  - [ ] Vaga com nota abaixo de 50 não chega em canal nenhum.
+  - [ ] Resumo sem vaga de nota 50 ou mais não manda mensagem.
 - **Envio:**
   - [ ] Uma vaga nova com Easy Apply chega pelo canal principal em até 1 ciclo (~2 min) depois
         de aparecer na busca.

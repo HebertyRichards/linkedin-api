@@ -147,8 +147,9 @@ class Settings(BaseSettings):
         resume_sources = sum(map(bool, (self.resume_file, self.resume_yaml.get_secret_value())))
         if resume_sources > 1:
             raise ValueError("set RESUME_FILE or RESUME_YAML, not both")
-        if bool(self.llm_api_key.get_secret_value()) != bool(resume_sources):
-            raise ValueError("job assessment needs LLM_API_KEY and a resume (RESUME_FILE or RESUME_YAML), or neither")
+        # Only a job scored MIN_SCORE or more goes out: without the score there is nothing to send.
+        if not (self.llm_api_key.get_secret_value() and resume_sources):
+            raise ValueError("the job score needs LLM_API_KEY and a resume (RESUME_FILE or RESUME_YAML)")
         fallback = {
             "LLM_FALLBACK_API_URL": self.llm_fallback_api_url,
             "LLM_FALLBACK_API_KEY": self.llm_fallback_api_key.get_secret_value(),
@@ -157,8 +158,6 @@ class Settings(BaseSettings):
         missing = [name for name, value in fallback.items() if not value]
         if missing and len(missing) < len(fallback):
             raise ValueError(f"the LLM fallback is incomplete, missing: {', '.join(missing)}")
-        if not missing and not self.llm_api_key.get_secret_value():
-            raise ValueError("LLM_FALLBACK_* backs up LLM_API_KEY: set LLM_API_KEY and a resume too")
         for channel, fields in required.items():
             missing = [name for name, value in fields.items() if not value]
             if missing and len(missing) < len(fields):
@@ -186,10 +185,6 @@ class Settings(BaseSettings):
         if self.telegram_bot_token.get_secret_value() and self.telegram_chat_id:
             configured.append("telegram")
         return sorted(configured, key=lambda name: name != self.notify_primary)
-
-    @property
-    def assessment_enabled(self) -> bool:
-        return bool(self.llm_api_key.get_secret_value() and (self.resume_file or self.resume_yaml.get_secret_value()))
 
     @property
     def llm_fallback_enabled(self) -> bool:

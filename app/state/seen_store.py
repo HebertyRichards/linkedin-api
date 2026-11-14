@@ -9,7 +9,9 @@ from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
 
-MAX_AGE = timedelta(days=30)
+# The 6-hour list reads jobs of any date, and a LinkedIn posting can stay open for months: a key kept for
+# less would bring an old job back, scored and sent again. A key is ~25 bytes: a year is well under 1 MB.
+MAX_AGE = timedelta(days=365)
 
 
 class _State(BaseModel):
@@ -58,7 +60,7 @@ class SeenStore:
             self._seen.setdefault(key, today)
 
     def prune(self, now: datetime) -> bool:
-        """Drops keys older than MAX_AGE (the source only shows the last hour). True when something went."""
+        """Drops keys older than MAX_AGE. True when something went."""
         cutoff = (now - MAX_AGE).date()
         expired = [key for key, day in self._seen.items() if _day(day) < cutoff]
         for key in expired:

@@ -13,7 +13,7 @@ from app.schemas.job import Assessment, Job, JobDetails
 from app.services.assessor import Assessor
 from app.services.dispatcher import Dispatcher
 from app.services.messages import MAX_PER_MESSAGE, batches, job_message, source_down_message
-from app.services.tailor import TAILOR_MIN_SCORE, Tailor, TailoredFile
+from app.services.tailor import MIN_SCORE, Tailor, TailoredFile
 from app.sources.base import JobSource
 from app.state.seen_store import SeenStore
 
@@ -26,12 +26,13 @@ INTERVAL_JITTER = 0.2
 # The cycle reads the last hour, wider than the poll interval on purpose: a job can reach the search a
 # while after its posting time, and the seen-set already drops the repeats.
 CYCLE_WINDOW_SECONDS = 3600
-# The digest reads the last 3 days, never older: it catches jobs that reached the search after the cycle's window.
-# Every 4 hours: each digest scores up to 10 jobs, and the LLM free quota has to last the day.
-DIGEST_EVERY = timedelta(hours=4)
-DIGEST_WINDOW_SECONDS = 3 * 86400
-# Bound for the held-job keys; past it they are forgotten (worst case a job is held one more time).
-_HELD_LIMIT = 1000
+# The digest reads jobs of any date: it lists what fits the resume, however old the posting. Every 6 hours,
+# never at boot: each digest scores up to 10 jobs not seen yet, and the LLM free quota has to last the day.
+DIGEST_EVERY = timedelta(hours=6)
+# A job page failing this many times without a block (broken page) is given up: marked as seen, never sent.
+_MAX_PAGE_FAILURES = 3
+# Bound for the failure counts; past it they are forgotten (worst case a broken page gets 3 more tries).
+_FAILURES_LIMIT = 1000
 
 
 _NOT = re.compile(r'\bNOT\s+(?:"([^"]+)"|(\S+))')
@@ -60,8 +61,7 @@ class _Batch:
     jobs: list[Job]
     scores: dict[str, Assessment] = field(default_factory=dict)
     tailored: dict[str, TailoredFile] = field(default_factory=dict)
-    held: int = 0
-    ai_on: bool = False  # scoring is configured: a job without a score says the analysis is down
+    pending: int = 0  # not scored yet (job page or LLM down): neither sent nor marked, so a later run scores them
 
 
 def _utc_now() -> datetime:
@@ -69,7 +69,8 @@ def _utc_now() -> datetime:
 
 
 class Watcher:
-    """One cycle: read every search, keep the jobs not seen yet, deliver them, remember what went out."""
+    """One cycle: read every search, score the jobs not seen yet, deliver the ones scored MIN_SCORE or more,
+    remember what was handled. A job below it is marked as seen and never goes out."""
 
     def __init__(
         self,
@@ -80,10 +81,10 @@ class Watcher:
         searches: Sequence[str],
         location: str,
         interval_seconds: int,
+        assessor: Assessor,
         search_spacing: tuple[float, float] = (2.0, 5.0),
         job_page_spacing: tuple[float, float] = (5.0, 10.0),
         clock: Callable[[], datetime] = _utc_now,
-        assessor: Assessor | None = None,
         tailor: Tailor | None = None,
         heartbeat: Callable[[], None] = lambda: None,
     ) -> None:
@@ -99,11 +100,11 @@ class Watcher:
         self._search_spacing = search_spacing
         self._job_page_spacing = job_page_spacing
         self._clock = clock
-        # Jobs already held once because LinkedIn blocked their page: the next time they go out without a score.
-        self._held: set[str] = set()
+        self._page_failures: dict[str, int] = {}
         self._failing_since: datetime | None = None
         self._down_alert_sent = False
-        self._next_digest: datetime | None = None
+        # Not at boot: a deploy starts the cycle only, and the first digest comes DIGEST_EVERY later.
+        self._next_digest = clock() + DIGEST_EVERY
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -144,7 +145,7 @@ class Watcher:
             await self._notify(list(new.values()), now)
         if self._store.prune(now) or state_changed:
             await self._store.save()
-        # A quiet cycle logs at DEBUG; the digest line every 4 hours shows the worker is alive.
+        # A quiet cycle logs at DEBUG; the digest line every 6 hours shows the worker is alive.
         logger.log(
             logging.INFO if new or failed else logging.DEBUG,
             "Cycle done: %d of %d search(es) answered, %d new job(s)",
@@ -154,34 +155,31 @@ class Watcher:
         )
 
     async def digest_if_due(self) -> None:
-        """Every DIGEST_EVERY: up to MAX_PER_MESSAGE jobs from the last 3 days not sent yet, in one message."""
+        """Every DIGEST_EVERY: scores up to MAX_PER_MESSAGE jobs of any date not seen yet and sends, in one
+        message, the ones scored MIN_SCORE or more. None of them: no message."""
         now = self._clock()
-        if self._next_digest is not None and now < self._next_digest:
+        if now < self._next_digest:
             return
-        answered = await self._read_searches(DIGEST_WINDOW_SECONDS)
+        answered = await self._read_searches(None)
         if not answered:
             return  # source down: the next loop tries again
-        pending: dict[str, Job] = {}
+        unseen: dict[str, Job] = {}
         for _, jobs in answered:
             for job in jobs:
                 if not self._store.is_seen(job.key):
-                    pending.setdefault(job.key, job)
-        batch = await self._assess(list(pending.values())[:MAX_PER_MESSAGE], now)
-        picked, held = batch.jobs, batch.held
-        if picked:
-            message = job_message(picked, batch.scores, batch.tailored, ai_on=batch.ai_on)
+                    unseen.setdefault(job.key, job)
+        batch = await self._assess(list(unseen.values())[:MAX_PER_MESSAGE], now)
+        if batch.jobs:
+            message = job_message(batch.jobs, batch.scores, batch.tailored)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 return  # left unmarked and still due: the next loop tries again
             self._store.mark(message.keys, now)
             await self._store.save()
-        if held:
-            logger.info("Digest sent %d job(s); %d held until the job pages answer", len(picked), held)
-            return  # still due: the next loop scores the held jobs
         self._next_digest = now + DIGEST_EVERY
-        logger.info("Digest done: %d of %d pending job(s) sent", len(picked), len(pending))
+        logger.info("Digest done: %d job(s) sent of %d not seen yet", len(batch.jobs), len(unseen))
 
-    async def _read_searches(self, window_seconds: int) -> list[tuple[str, list[Job]]]:
+    async def _read_searches(self, window_seconds: int | None) -> list[tuple[str, list[Job]]]:
         """Each search that answered, with its jobs. A failed search is logged and left out.
 
         A block stops the read: the other searches would only fail too, one warning each.
@@ -205,18 +203,16 @@ class Watcher:
         return answered
 
     async def _assess(self, jobs: list[Job], now: datetime) -> _Batch:
-        """Scores each job, best first; a score from TAILOR_MIN_SCORE up also gets the tailored resume.
+        """Scores each job and keeps the ones scored MIN_SCORE or more, best first, each with its tailored resume.
 
-        On-site and closed jobs are dropped and marked as seen: they never go out. When LinkedIn blocks the job
-        pages, the unscored jobs are held (not sent, not marked) once, so the next run can score them; held a
-        second time, they go out without a score. Any other failure (page broken, LLM down) sends them unscored.
+        Low-scored, on-site and closed jobs are dropped and marked as seen: they never go out. A job without a
+        score (job page or LLM down) is pending: neither sent nor marked, so the next run scores it. Only a job
+        page that keeps failing without a block gives up after _MAX_PAGE_FAILURES, so it cannot fill every digest.
         """
-        if self._assessor is None:
-            return _Batch(jobs)
         scores: dict[str, Assessment] = {}
         tailored: dict[str, TailoredFile] = {}
-        held: set[str] = set()
         closed: set[str] = set()
+        pending = 0
         blocked = False
         fetched = 0
         for job in jobs:
@@ -231,35 +227,55 @@ class Watcher:
                 except SourceUnavailableError as e:
                     logger.warning("Job page of %s unavailable: %s", job.key, e)
                     blocked = e.blocked  # a block stops the job pages for the rest of this batch
+                    if not blocked and self._page_failed(job):
+                        closed.add(job.key)
+                        continue
                 else:
                     if details.closed:
                         closed.add(job.key)  # no score needed: it is dropped, so no quota spent
                         continue
                     assessment = await self._assessor.assess(job, details)
-            if assessment is not None:
-                scores[job.key] = assessment
-                resume = await self._tailored(job, assessment, details)
+            if assessment is None:
+                pending += 1
+                continue
+            scores[job.key] = assessment
+            if assessment.score >= MIN_SCORE and assessment.workplace != "onsite":
+                resume = await self._tailored(job, details)
                 if resume is not None:
                     tailored[job.key] = resume
-            elif blocked and job.key not in self._held:
-                held.add(job.key)
         onsite = {key for key, assessment in scores.items() if assessment.workplace == "onsite"}
-        dropped = onsite | closed
+        low = {key for key, assessment in scores.items() if assessment.score < MIN_SCORE} - onsite
+        dropped = low | onsite | closed
         if dropped:
             self._store.mark(dropped, now)
             await self._store.save()
-            logger.info("Dropped %d on-site and %d closed job(s)", len(onsite), len(closed))
-        if held:
-            logger.warning("Held %d job(s) until LinkedIn lets the job pages through", len(held))
-        kept = [job for job in jobs if job.key not in dropped | held]
-        kept.sort(key=lambda job: scores[job.key].score if job.key in scores else -1, reverse=True)
-        if len(self._held) > _HELD_LIMIT:
-            self._held.clear()
-        self._held = (self._held | held) - {job.key for job in kept}
-        return _Batch(kept, scores, tailored, len(held), ai_on=True)
+            logger.info(
+                "Dropped %d job(s) scored below %d, %d on-site and %d closed",
+                len(low),
+                MIN_SCORE,
+                len(onsite),
+                len(closed),
+            )
+        if pending:
+            logger.warning("%d job(s) not scored yet: they wait for the next run", pending)
+        kept = [job for job in jobs if job.key in scores and job.key not in dropped]
+        kept.sort(key=lambda job: scores[job.key].score, reverse=True)
+        return _Batch(kept, scores, tailored, pending)
 
-    async def _tailored(self, job: Job, assessment: Assessment, details: JobDetails | None) -> TailoredFile | None:
-        if self._tailor is None or assessment.score < TAILOR_MIN_SCORE or assessment.workplace == "onsite":
+    def _page_failed(self, job: Job) -> bool:
+        """Counts a job page failure that was not a block. True when the job is given up."""
+        if len(self._page_failures) > _FAILURES_LIMIT:
+            self._page_failures.clear()
+        failures = self._page_failures.get(job.key, 0) + 1
+        self._page_failures[job.key] = failures
+        if failures < _MAX_PAGE_FAILURES:
+            return False
+        logger.warning("Job page of %s failed %d times: given up", job.key, failures)
+        del self._page_failures[job.key]
+        return True
+
+    async def _tailored(self, job: Job, details: JobDetails | None) -> TailoredFile | None:
+        if self._tailor is None:
             return None
         # Without the page (the score came from the cache) only an already built file can be used.
         return self._tailor.cached(job) if details is None else await self._tailor.tailor(job, details)
@@ -267,7 +283,7 @@ class Watcher:
     async def _notify(self, jobs: list[Job], now: datetime) -> None:
         batch = await self._assess(jobs, now)
         for group in batches(batch.jobs):
-            message = job_message(group, batch.scores, batch.tailored, ai_on=batch.ai_on)
+            message = job_message(group, batch.scores, batch.tailored)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
                 # Left unmarked on purpose: the next cycle tries these jobs again.

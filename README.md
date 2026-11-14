@@ -15,14 +15,15 @@ It does not apply for you, does not list every job, and needs no database.
 ## How it works
 
 ```
-at boot, then every 4 hours: digest
-  for each search: Easy Apply jobs posted in the last 3 days, never older (f_TPR=r259200)
-  send up to 10 not sent yet in one message (catches jobs that reached the search late)
+every 6 hours, never at boot: digest
+  for each search: Easy Apply jobs of any date (no f_TPR), up to 3 pages
+  score up to 10 not seen yet; send the ones scored 50 or more in one message; none of them: no message
 
 every ~30 min (±20%)
   for each search (max 3): Easy Apply jobs posted in the last hour (f_AL=true, f_TPR=r3600), all pages
   new = job ids not seen before
   first read of a search = baseline: what is already posted is marked as seen, nothing is sent
+  score each new job: 50 or more -> send    below 50, on-site or closed -> marked as seen, never sent
   send: primary channel -> fallback channel
   accepted -> remember the ids    both failed -> keep them pending, the next cycle tries again
 ```
@@ -35,11 +36,12 @@ every ~30 min (±20%)
 - **"Delivered" means the provider accepted the message** (a 2xx from Resend, Evolution or Telegram). If the primary
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
-- **With `LLM_API_KEY` and `RESUME_FILE`, each new job gets a score (0-100)** against your resume, with the
-  reason and what is missing, and the best scores go first. The AI (Groq's free tier by default) reads the
-  job page and the resume without the contact block. On-site jobs are dropped. When the AI is down or the free
-  quota is used up, the job still goes out, without a score, and the email says the analysis is down.
-- **A job scored 50 or more (not on-site) also gets a resume tailored to it,** attached to the email as a
+- **Only a job scored 50 or more goes out, on every channel.** Each new job gets a score (0-100) against
+  your resume, with the reason and what is missing, and the best scores go first. The AI (Groq's free tier by
+  default) reads the job page and the resume without the contact block. Below 50, on-site and closed jobs are
+  marked as seen and never sent. When the AI or the job page is down, the job is not sent and not marked: a
+  later cycle or digest scores it (a job page that fails 3 times without a block is given up).
+- **Every job sent gets a resume tailored to it,** attached to the email as a
   PDF, with a preview in the card (summary, top highlights, projects). The AI only picks and orders what
   the resume YAML already has and rewrites the summary; the code checks every pick and drops a summary
   that names a technology or a seniority level the resume does not have. Telegram gets the PDF right after
@@ -48,7 +50,7 @@ every ~30 min (±20%)
   repeated until the source recovers. A failure is an error, a block, or a page the parser no longer
   recognizes (LinkedIn changed the markup or answered with a challenge page).
 - **A cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 1 new job(s)`) only when it found new jobs
-  or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 4 hours shows the worker is
+  or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 6 hours shows the worker is
   alive. A block (429) stops the cycle at the first search, with one warning. Logs go to stdout.
 
 ## Environment variables
@@ -72,9 +74,9 @@ error names the missing variables and never prints their values.
 | `TELEGRAM_CHAT_ID` | Telegram | — | Numeric id of your chat with the bot (a group id is negative) |
 | `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first (`email`, `whatsapp` or `telegram`); then email, WhatsApp, Telegram |
 | `POLL_INTERVAL_SECONDS` | no | `1800` | Seconds between cycles, minimum 60 |
-| `LLM_API_KEY` | no | — | Turns on job scoring. Free key at console.groq.com |
-| `RESUME_FILE` | with `LLM_API_KEY` (or `RESUME_YAML`) | — | Path of the resume YAML (git-ignored). Local runs |
-| `RESUME_YAML` | with `LLM_API_KEY` (or `RESUME_FILE`) | — | The resume YAML itself, pasted as a multi-line variable. Railway |
+| `LLM_API_KEY` | yes | — | Job scoring: only jobs scored 50 or more go out. Free key at console.groq.com |
+| `RESUME_FILE` | yes (or `RESUME_YAML`) | — | Path of the resume YAML (git-ignored). Local runs |
+| `RESUME_YAML` | yes (or `RESUME_FILE`) | — | The resume YAML itself, pasted as a multi-line variable. Railway |
 | `LLM_API_URL` | no | `https://api.groq.com/openai/v1` | Any OpenAI-compatible API |
 | `LLM_MODEL` | no | `openai/gpt-oss-20b` | Model used for the score |
 | `LLM_TAILOR_MODEL` | no | `openai/gpt-oss-120b` | Model that tailors the resume (score 50 or more) |
@@ -133,8 +135,8 @@ cp .env.example .env  # fill in the values
 make run
 ```
 
-At boot the digest sends up to 10 jobs from the last 3 days; the first cycle then takes the baseline, and
-alerts start with the next job that gets posted. Stop with Ctrl+C.
+The first cycle takes the baseline, and alerts start with the next job that gets posted and scores 50 or
+more. The first digest runs 6 hours after the boot: every deploy restarts that clock. Stop with Ctrl+C.
 
 ## Deploying on Railway
 
