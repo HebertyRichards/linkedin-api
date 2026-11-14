@@ -1,11 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
+import httpx
+from pydantic import SecretStr
+
 from app.channels.base import Attachment, Message
 from app.config.settings import Channel, Settings
 from app.errors import SourceUnavailableError
 from app.schemas.job import Assessment, Job, JobDetails, Workplace
 from app.schemas.resume import TailoredResume
 from app.services.dispatcher import Dispatcher
+from app.services.llm import ChatClient
 from app.services.tailor import TailoredFile
 from app.services.watcher import Watcher
 from app.state.seen_store import SeenStore
@@ -19,6 +23,22 @@ WHATSAPP: dict[str, object] = {
 # Made-up token in the BotFather format.
 TELEGRAM_TOKEN = "123456789:AAFakeTokenForTestsOnly_abcdefghij"  # secrets-ok gitleaks:allow
 TELEGRAM: dict[str, object] = {"telegram_bot_token": TELEGRAM_TOKEN, "telegram_chat_id": "987654321"}
+
+
+GROQ_URL = "https://api.groq.com/openai/v1"
+FALLBACK: dict[str, object] = {
+    "llm_fallback_api_url": "https://openrouter.ai/api/v1",
+    "llm_fallback_api_key": "sk-or-test-key",  # secrets-ok gitleaks:allow
+    "llm_fallback_model": "openai/gpt-oss-20b:free",
+}
+
+
+def build_chat(
+    client: httpx.AsyncClient, *, model: str, url: str = GROQ_URL, retry_base_delay: float = 0.0
+) -> ChatClient:
+    return ChatClient(
+        client, url=url, api_key=SecretStr("gsk_test_key"), model=model, retry_base_delay=retry_base_delay
+    )
 
 
 def make_settings(**overrides: object) -> Settings:

@@ -51,17 +51,24 @@ class Settings(BaseSettings):
 
     notify_primary: Channel = Field(default="whatsapp")
 
-    # Job assessment by an LLM with an OpenAI-compatible API (Groq by default). Off without a key.
     llm_api_url: str = Field(default="https://api.groq.com/openai/v1")
     llm_api_key: SecretStr = Field(default=SecretStr(""))
     llm_model: str = Field(default="openai/gpt-oss-20b")
-    # The tailored resume (score >= 80) uses another model: Groq counts the free quota per model.
     llm_tailor_model: str = Field(default="openai/gpt-oss-120b")
-    # The resume: a file path (local) or the YAML itself (Railway, where the git-ignored file does not exist).
+    llm_fallback_api_url: str = Field(default="")
+    llm_fallback_api_key: SecretStr = Field(default=SecretStr(""))
+    llm_fallback_model: str = Field(default="")
     resume_file: str = Field(default="")
     resume_yaml: SecretStr = Field(default=SecretStr(""))
 
-    @field_validator("resend_api_key", "evolution_api_key", "llm_api_key", "telegram_bot_token", mode="before")
+    @field_validator(
+        "resend_api_key",
+        "evolution_api_key",
+        "llm_api_key",
+        "llm_fallback_api_key",
+        "telegram_bot_token",
+        mode="before",
+    )
     @classmethod
     def _strip_secret(cls, v: object) -> object:
         # Values pasted from a dashboard often carry a stray space or newline.
@@ -83,7 +90,7 @@ class Settings(BaseSettings):
             raise ValueError("must be an email address")
         return v
 
-    @field_validator("evolution_api_url", "llm_api_url")
+    @field_validator("evolution_api_url", "llm_api_url", "llm_fallback_api_url")
     @classmethod
     def _service_url(cls, v: str) -> str:
         v = v.strip().rstrip("/")
@@ -142,6 +149,16 @@ class Settings(BaseSettings):
             raise ValueError("set RESUME_FILE or RESUME_YAML, not both")
         if bool(self.llm_api_key.get_secret_value()) != bool(resume_sources):
             raise ValueError("job assessment needs LLM_API_KEY and a resume (RESUME_FILE or RESUME_YAML), or neither")
+        fallback = {
+            "LLM_FALLBACK_API_URL": self.llm_fallback_api_url,
+            "LLM_FALLBACK_API_KEY": self.llm_fallback_api_key.get_secret_value(),
+            "LLM_FALLBACK_MODEL": self.llm_fallback_model.strip(),
+        }
+        missing = [name for name, value in fallback.items() if not value]
+        if missing and len(missing) < len(fallback):
+            raise ValueError(f"the LLM fallback is incomplete, missing: {', '.join(missing)}")
+        if not missing and not self.llm_api_key.get_secret_value():
+            raise ValueError("LLM_FALLBACK_* backs up LLM_API_KEY: set LLM_API_KEY and a resume too")
         for channel, fields in required.items():
             missing = [name for name, value in fields.items() if not value]
             if missing and len(missing) < len(fields):
@@ -173,6 +190,11 @@ class Settings(BaseSettings):
     @property
     def assessment_enabled(self) -> bool:
         return bool(self.llm_api_key.get_secret_value() and (self.resume_file or self.resume_yaml.get_secret_value()))
+
+    @property
+    def llm_fallback_enabled(self) -> bool:
+        key = self.llm_fallback_api_key.get_secret_value()
+        return bool(self.llm_fallback_api_url and key and self.llm_fallback_model.strip())
 
     @property
     def is_production(self) -> bool:

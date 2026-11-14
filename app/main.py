@@ -16,7 +16,7 @@ from app.config.settings import Settings, get_settings
 from app.schemas.resume import Contact, Resume, parse_contact, parse_resume, read_resume_file
 from app.services.assessor import JobAssessor
 from app.services.dispatcher import Dispatcher
-from app.services.llm import ChatClient
+from app.services.llm import build_chats
 from app.services.tailor import ResumeTailor
 from app.services.watcher import INTERVAL_JITTER, Watcher
 from app.sources.linkedin_guest import LinkedInGuestSource
@@ -67,7 +67,10 @@ async def run(settings: Settings, profile: tuple[Resume, Contact] | None = None)
             settings.poll_interval_seconds,
             " -> ".join(settings.channels),
             "file" if settings.state_file else "memory only",
-            f"{settings.llm_model} (resume: {settings.llm_tailor_model})" if profile else "off",
+            f"{settings.llm_model} (resume: {settings.llm_tailor_model})"
+            + (f", fallback {settings.llm_fallback_model}" if settings.llm_fallback_enabled else "")
+            if profile
+            else "off",
         )
         watchdog.start()
         try:
@@ -97,11 +100,8 @@ def _ai_services(
     if profile is None:
         return None, None
     resume, contact = profile
-    # One client per model: Groq counts the free quota per model, so each one has its own breaker.
-    return (
-        JobAssessor(ChatClient(client, settings, model=settings.llm_model), resume),
-        ResumeTailor(ChatClient(client, settings, model=settings.llm_tailor_model), resume, contact),
-    )
+    score, tailor = build_chats(client, settings)
+    return JobAssessor(score, resume), ResumeTailor(tailor, resume, contact)
 
 
 def main() -> None:

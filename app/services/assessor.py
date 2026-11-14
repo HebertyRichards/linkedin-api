@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.schemas.job import Assessment, Job, JobDetails
 from app.schemas.resume import Resume
-from app.services.llm import ChatClient
+from app.services.llm import ChatModel
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ class JobAssessor:
     """Scores a job against the resume. Never raises: any failure returns None and the job goes out
     without a score."""
 
-    def __init__(self, chat: ChatClient, resume: Resume, *, today: Callable[[], date] = _today) -> None:
+    def __init__(self, chat: ChatModel, resume: Resume, *, today: Callable[[], date] = _today) -> None:
         self._chat = chat
         self._resume = resume
         self._today = today

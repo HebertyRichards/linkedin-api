@@ -183,10 +183,17 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
 | **Groq, plano grátis** (`gpt-oss-20b`) | zero; ~200 mil tokens/dia por modelo | não guarda por padrão (logs até 30 dias) | **escolhida** |
 | Claude Haiku (API) | ~US$ 1,50/mês | termos comerciais | fora: orçamento zero |
 | Gemini grátis | zero | os termos proíbem enviar dado pessoal no plano grátis | fora |
-| OpenRouter `:free` | zero; 50 pedidos/dia | depende do provedor | reserva |
+| OpenRouter `:free` | zero; 50 pedidos/dia | depende do provedor | reserva (`LLM_FALLBACK_*`) |
 
-- **Uma classe só** para qualquer API no formato OpenAI: trocar de provedor é trocar `LLM_API_URL`,
-  `LLM_MODEL` e `LLM_API_KEY`.
+- **Contrato e reserva entre provedores**: o assessor e o
+  tailor dependem do contrato `ChatModel`, não de um provedor. `ChatClient` é o adapter para qualquer API no
+  formato OpenAI (trocar de provedor é trocar `LLM_API_URL`, `LLM_MODEL` e `LLM_API_KEY`). Com
+  `LLM_FALLBACK_API_URL` + `LLM_FALLBACK_API_KEY` + `LLM_FALLBACK_MODEL`, o `FallbackChat` pergunta ao segundo
+  provedor quando o primeiro não responde (fora do ar, cota esgotada, recusa): a vaga continua com nota quando a
+  cota grátis da Groq acaba. A reserva usa um modelo só para nota e currículo, e o cliente dela é um só, para
+  o breaker ver toda a carga daquele provedor. Custo: nota de outro modelo pode variar alguns pontos, e o
+  segundo provedor também recebe o currículo (sem `contato`). `reasoning_effort` só vai para a Groq.
+  Adapter por provedor fora do formato OpenAI (Anthropic nativa, Gemini nativo): fora, até alguém usar um.
 - **O currículo vem de um YAML**, fora do Git e da imagem: `RESUME_FILE` (caminho, local) ou `RESUME_YAML`
   (o conteúdo numa variável do Railway, guardada como segredo; atualizar é editar a variável). O bloco
   `contato` nunca é lido pelo código que monta o prompt.

@@ -1,7 +1,10 @@
 import logging
 from collections.abc import Mapping
+from typing import Protocol
+from urllib.parse import urlsplit
 
 import httpx
+from pydantic import SecretStr
 
 from app.config.settings import Settings
 from app.errors import RetryableError
@@ -18,6 +21,16 @@ _ATTEMPTS = 4
 _MINUTE_WINDOW_SECONDS = 60.0
 
 
+class ChatModel(Protocol):
+    """What the assessor and the tailor need from an LLM. Never raises: any failure is None."""
+
+    model: str
+
+    async def complete(self, system: str, user: str, response_format: Mapping[str, object]) -> str | None:
+        """The reply text (JSON under `response_format`), or None when no model could answer."""
+        ...
+
+
 class ChatClient:
     """One model behind an OpenAI-compatible chat API (Groq by default), with its own breaker and retries.
 
@@ -25,11 +38,19 @@ class ChatClient:
     """
 
     def __init__(
-        self, client: httpx.AsyncClient, settings: Settings, *, model: str, retry_base_delay: float = 1.0
+        self,
+        client: httpx.AsyncClient,
+        *,
+        url: str,
+        api_key: SecretStr,
+        model: str,
+        retry_base_delay: float = 1.0,
     ) -> None:
         self._client = client
-        self._endpoint = f"{settings.llm_api_url}/chat/completions"
-        self._api_key = settings.llm_api_key
+        self._endpoint = f"{url}/chat/completions"
+        self._api_key = api_key
+        # Groq accepts reasoning_effort only on gpt-oss; another provider may refuse the unknown field.
+        self._low_effort = "gpt-oss" in model and urlsplit(url).hostname == "api.groq.com"
         self.model = model
         self._retry_base_delay = retry_base_delay
         self._breaker = CircuitBreaker(
@@ -77,9 +98,8 @@ class ChatClient:
             "response_format": response_format,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }
-        if "gpt-oss" in self.model:
-            # Groq accepts this only on gpt-oss. Low effort keeps reasoning tokens off the free quota.
-            body["reasoning_effort"] = "low"
+        if self._low_effort:
+            body["reasoning_effort"] = "low"  # keeps reasoning tokens off the free quota
         try:
             response = await self._client.post(
                 self._endpoint,
@@ -95,3 +115,41 @@ class ChatClient:
                 return response  # a quota window, not a blip: complete() opens the breaker instead
             raise RetryableError(f"status {response.status_code}", retry_after)
         return response
+
+
+class FallbackChat:
+    """The primary model first; the fallback when it gives nothing (down, quota used up, refused, unusable
+    reply), so a job still gets its score when Groq's free quota runs out."""
+
+    def __init__(self, primary: ChatModel, fallback: ChatModel) -> None:
+        self._primary = primary
+        self._fallback = fallback
+        self.model = primary.model
+
+    async def complete(self, system: str, user: str, response_format: Mapping[str, object]) -> str | None:
+        reply = await self._primary.complete(system, user, response_format)
+        if reply is not None:
+            return reply
+        reply = await self._fallback.complete(system, user, response_format)
+        if reply is not None:
+            logger.info("LLM %s gave no answer: %s answered instead", self._primary.model, self._fallback.model)
+        return reply
+
+
+def build_chats(
+    client: httpx.AsyncClient, settings: Settings, *, retry_base_delay: float = 1.0
+) -> tuple[ChatModel, ChatModel]:
+    """The chats of the score and of the tailored resume, each backed by the fallback provider when set.
+
+    One client per primary model (Groq counts the quota per model). The fallback is one client shared by
+    both, so its breaker sees the whole load on that provider."""
+
+    def chat(url: str, api_key: SecretStr, model: str) -> ChatClient:
+        return ChatClient(client, url=url, api_key=api_key, model=model, retry_base_delay=retry_base_delay)
+
+    score = chat(settings.llm_api_url, settings.llm_api_key, settings.llm_model)
+    tailor = chat(settings.llm_api_url, settings.llm_api_key, settings.llm_tailor_model)
+    if not settings.llm_fallback_enabled:
+        return score, tailor
+    fallback = chat(settings.llm_fallback_api_url, settings.llm_fallback_api_key, settings.llm_fallback_model)
+    return FallbackChat(score, fallback), FallbackChat(tailor, fallback)

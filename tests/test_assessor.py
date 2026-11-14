@@ -10,8 +10,7 @@ import pytest
 from app.schemas.job import JobDetails
 from app.schemas.resume import Resume, load_resume, parse_resume
 from app.services.assessor import JobAssessor, technologies, without_versions
-from app.services.llm import ChatClient
-from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
+from tests.helpers import DETAILS, RESUME_YAML, build_chat, job
 
 Handler = Callable[[httpx.Request], httpx.Response]
 LLM = {"llm_api_key": "gsk_test_key", "resume_file": "curriculo.yaml"}
@@ -34,7 +33,7 @@ def resume(tmp_path: Path) -> Resume:
 
 def assessor_for(handler: Handler, resume: Resume) -> tuple[JobAssessor, httpx.AsyncClient]:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-20b", retry_base_delay=0)
+    chat = build_chat(client, model="openai/gpt-oss-20b", retry_base_delay=0)
     assessor = JobAssessor(chat, resume, today=lambda: date(2026, 11, 12))
     return assessor, client
 

@@ -5,7 +5,6 @@ import httpx
 import pytest
 
 from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
-from app.services.llm import ChatClient
 from app.services.resume_pdf import render_pdf
 from app.services.tailor import (
     ResumeTailor,
@@ -15,7 +14,7 @@ from app.services.tailor import (
     build_tailored,
     safe_summary,
 )
-from tests.helpers import DETAILS, RESUME_YAML, job, make_settings
+from tests.helpers import DETAILS, RESUME_YAML, build_chat, job
 
 TODAY = date(2026, 11, 12)
 LLM = {"llm_api_key": "gsk_test_key", "resume_file": "curriculo.yaml"}
@@ -129,7 +128,7 @@ async def test_tailor_builds_the_pdf_once_and_never_sends_contact_data(resume: R
         return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": content}}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
         tailor = ResumeTailor(chat, resume, contact, today=lambda: TODAY)
         first = await tailor.tailor(job(1), DETAILS)
         again = await tailor.tailor(job(1), DETAILS)
@@ -149,7 +148,7 @@ async def test_an_unusable_reply_gives_no_file(resume: Resume, contact: Contact)
         return httpx.Response(200, json={"choices": [{"message": {"content": '{"resumo": 1}'}}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
         result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
 
     assert result is None
@@ -167,7 +166,7 @@ async def test_a_pdf_that_fails_to_render_gives_no_file_instead_of_failing_the_c
 
     monkeypatch.setattr("app.services.tailor.render_pdf", broken)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        chat = ChatClient(client, make_settings(**LLM), model="openai/gpt-oss-120b", retry_base_delay=0)
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
         result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
 
     assert result is None

@@ -78,6 +78,9 @@ error names the missing variables and never prints their values.
 | `LLM_API_URL` | no | `https://api.groq.com/openai/v1` | Any OpenAI-compatible API |
 | `LLM_MODEL` | no | `openai/gpt-oss-20b` | Model used for the score |
 | `LLM_TAILOR_MODEL` | no | `openai/gpt-oss-120b` | Model that tailors the resume (score 50 or more) |
+| `LLM_FALLBACK_API_URL` | no (all three or none) | — | Second OpenAI-compatible provider, asked when the first gives no answer (e.g. `https://openrouter.ai/api/v1`) |
+| `LLM_FALLBACK_API_KEY` | with the fallback | — | Key of that provider (OpenRouter → Keys) |
+| `LLM_FALLBACK_MODEL` | with the fallback | — | One model for both the score and the resume; it must support structured outputs (json_schema) |
 | `STATE_FILE` | no | memory only | Path of the seen-jobs file, e.g. `/data/seen.json` on a volume |
 | `LOG_LEVEL` | no | `INFO` | |
 | `APP_ENV` | no | `development` | `production` switches the logs to JSON |

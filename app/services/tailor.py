@@ -13,7 +13,7 @@ from app.channels.base import Attachment
 from app.schemas.job import Job, JobDetails
 from app.schemas.resume import Contact, Highlight, Resume, TailoredResume
 from app.services.assessor import job_text
-from app.services.llm import ChatClient
+from app.services.llm import ChatModel
 from app.services.resume_pdf import render_pdf
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ class ResumeTailor:
     without the attachment)."""
 
     def __init__(
-        self, chat: ChatClient, resume: Resume, contact: Contact, *, today: Callable[[], date] = _today
+        self, chat: ChatModel, resume: Resume, contact: Contact, *, today: Callable[[], date] = _today
     ) -> None:
         self._chat = chat
         self._resume = resume
