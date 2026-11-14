@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.schemas.job import JobDetails
 from app.schemas.resume import Resume, load_resume, parse_resume
 from app.services.assessor import JobAssessor, technologies, without_versions
 from app.services.llm import ChatClient
@@ -205,3 +206,23 @@ def test_years_of_experience_are_never_taken_for_a_version(text: str) -> None:
 def test_a_number_that_is_part_of_the_name_stays() -> None:
     assert "S3" in technologies(parse_resume(RESUME_YAML.replace("[Go, Kafka, Rust]", "[Go, Kafka, Rust, S3]")))
     assert without_versions("Java 17 e S3", {"Java", "S3"}) == "Java e S3"
+
+
+@pytest.mark.parametrize(
+    ("description", "score"),
+    [
+        ("Buscamos adultos e jovens dinâmicos para expansão de Plataformas e Redes de Negócios.", 30),
+        ("Buscamos pessoa de dados com Go.", 100),
+        ("Pipelines com kafka e golang.", 100),  # "Kafka" in any case
+    ],
+)
+async def test_a_job_that_names_no_resume_technology_scores_at_most_30(
+    resume: Resume, description: str, score: int
+) -> None:
+    perfect = json.dumps({"score": 100, "workplace": "remote", "reasons": "Não pede nada.", "gaps": []})
+    assessor, client = assessor_for(lambda _: reply(perfect), resume)
+    details = JobDetails(description=description, seniority="Not Applicable", employment_type="Other")
+    async with client:
+        result = await assessor.assess(job(1, "Consultores de Plataformas Digitais"), details)
+
+    assert result is not None and result.score == score

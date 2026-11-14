@@ -2,6 +2,8 @@ import asyncio
 import contextlib
 import logging
 import random
+import re
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -30,6 +32,25 @@ DIGEST_EVERY = timedelta(hours=4)
 DIGEST_WINDOW_SECONDS = 3 * 86400
 # Bound for the held-job keys; past it they are forgotten (worst case a job is held one more time).
 _HELD_LIMIT = 1000
+
+
+_NOT = re.compile(r'\bNOT\s+(?:"([^"]+)"|(\S+))')
+
+
+def _plain(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+def excluded_terms(keywords: str) -> list[str]:
+    """The `NOT term` and `NOT "two words"` of a search, without accents."""
+    return [_plain(phrase or word) for phrase, word in _NOT.findall(keywords)]
+
+
+def is_excluded(title: str, terms: Sequence[str]) -> bool:
+    """LinkedIn's guest search does not always honor NOT, and matches "consultor" exactly where
+    "Consultores" is the same role: a title with a word starting with an excluded term is dropped here."""
+    plain = _plain(title)
+    return any(re.search(rf"\b{re.escape(term)}", plain) for term in terms)
 
 
 @dataclass
@@ -176,7 +197,11 @@ class Watcher:
                 if e.blocked:
                     break
                 continue
-            answered.append((keywords, jobs))
+            terms = excluded_terms(keywords)
+            kept = [job for job in jobs if not is_excluded(job.title, terms)]
+            if len(kept) < len(jobs):
+                logger.info("Search '%s': %d job(s) dropped by a NOT term", keywords, len(jobs) - len(kept))
+            answered.append((keywords, kept))
         return answered
 
     async def _assess(self, jobs: list[Job], now: datetime) -> _Batch:

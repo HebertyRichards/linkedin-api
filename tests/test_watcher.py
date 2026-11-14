@@ -6,6 +6,7 @@ import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
 from app.services.messages import AI_DOWN, RESUME_DOWN, job_message
+from app.services.watcher import excluded_terms, is_excluded
 from app.state.seen_store import SeenStore
 from tests.helpers import (
     Clock,
@@ -348,3 +349,36 @@ async def test_without_ai_configured_there_is_no_down_notice() -> None:
     await watcher.cycle()
 
     assert AI_DOWN not in email.sent[0].text
+
+
+def test_not_terms_are_read_with_quotes_and_without_accents() -> None:
+    search = '("desenvolvedor react" OR fullstack) NOT sênior NOT "menor aprendiz" NOT consultor'
+    assert excluded_terms(search) == ["senior", "menor aprendiz", "consultor"]
+    assert excluded_terms("python developer") == []
+
+
+@pytest.mark.parametrize(
+    ("title", "dropped"),
+    [
+        ("Consultores e Menores aprendizes de Plataformas Digitais", True),  # plural of "consultor"
+        ("Desenvolvedor Full Stack Sênior", True),
+        ("Desenvolvedor Full Stack Pleno", False),
+        ("Engenheiro de Software - Seniority Flexível", True),  # a word starting with the term
+        ("Desenvolvedora Python (Consultoria interna)", True),
+        ("Desenvolvedor Python para time de consultas", False),
+    ],
+)
+def test_a_title_with_a_not_term_is_dropped(title: str, dropped: bool) -> None:
+    assert is_excluded(title, ["senior", "consultor"]) is dropped
+
+
+async def test_jobs_with_a_not_term_in_the_title_never_go_out() -> None:
+    email = FakeNotifier("email")
+    noise = job(2, "Consultores e Menores aprendizes de Plataformas e Soluções Digitais")
+    source = FakeSource([[job(1)], [job(1), noise, job(3)]])
+    watcher = make_watcher(source, [email], searches=["fullstack NOT consultor"])
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert [message.keys for message in email.sent] == [(job(3).key,)]

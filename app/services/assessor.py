@@ -18,6 +18,9 @@ _CACHE_SIZE = 500
 # " 17", " 8.2", " 3.x", " 19+", after a space: in "S3" or "EC2" the number is the name. Never years of
 # experience ("5 anos", "3 a 5 anos", "2-3 anos", "3 ou mais anos"), which are a real requirement.
 _YEARS = r"\+?\s*(?:(?:a|-|\u2013|to|ou)\s*\d+\s*|ou mais\s*|or more\s*)?(?:anos?|years?|meses|months)\b"
+# A job text that names none of the resume's technologies has no evidence of fit: the score goes no higher.
+# The prompt says so too, but a model scored a sales posting of one sentence 100 ("nothing is missing").
+NO_EVIDENCE_MAX_SCORE = 30
 _VERSION = rf"\s+v?\d+(?:\.(?:\d+|x))*\+?(?!\w|\.\w)(?!{_YEARS})"
 
 _SYSTEM_PROMPT = """You score how well a job posting fits a candidate's resume.
@@ -29,6 +32,10 @@ Rules:
   as a different technology (AngularJS is not Angular).
 - A closely related technology (MySQL for PostgreSQL, Vitest for Jest) lowers the score much less than a
   missing one.
+- A role that is not software development (sales, consulting, apprentice, support, operations) scores
+  at most 10, whatever its text says.
+- A high score needs evidence: requirements the resume meets. A posting that asks for nothing technical
+  is not a perfect fit for having nothing to miss: it scores at most 30.
 - The candidate looks for the levels in "Níveis buscados". A senior, lead, staff, principal or
   specialist role scores at most 40.
 - workplace: "onsite" only when the job requires working at the office every day; "hybrid" when it
@@ -108,6 +115,8 @@ class JobAssessor:
         self._resume = resume
         self._today = today
         self._technologies = technologies(resume)
+        names = "|".join(re.escape(name) for name in sorted(self._technologies, key=len, reverse=True))
+        self._names = re.compile(rf"(?<![\w.])(?:{names})(?![\w+#])", re.IGNORECASE) if names else None
         self._cache: dict[str, Assessment] = {}
 
     def cached(self, job: Job) -> Assessment | None:
@@ -127,6 +136,10 @@ class JobAssessor:
         except ValidationError as e:
             logger.warning("Assessment of %s unusable: %d error(s)", job.key, e.error_count())
             return None
+        text = f"{job.title}\n{details.description}"
+        if assessment.score > NO_EVIDENCE_MAX_SCORE and (self._names is None or not self._names.search(text)):
+            logger.info("Score of %s capped at %d: the job names no resume technology", job.key, NO_EVIDENCE_MAX_SCORE)
+            assessment = assessment.model_copy(update={"score": NO_EVIDENCE_MAX_SCORE})
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = assessment
