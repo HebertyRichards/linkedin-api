@@ -10,12 +10,13 @@ import httpx
 
 from app.channels.base import Notifier
 from app.channels.email import EmailNotifier
-from app.channels.telegram import TelegramNotifier
+from app.channels.telegram import TelegramInbox, TelegramNotifier
 from app.channels.whatsapp import WhatsAppNotifier
 from app.config.logging_config import setup_logging
 from app.config.settings import Settings, get_settings
 from app.schemas.resume import Contact, Resume, parse_contact, parse_resume, read_resume_file
 from app.services.assessor import JobAssessor
+from app.services.commands import Commands
 from app.services.dispatcher import Dispatcher
 from app.services.llm import build_chats
 from app.services.tailor import ResumeTailor
@@ -73,9 +74,15 @@ async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
             + (f", fallback {settings.llm_fallback_model}" if settings.llm_fallback_enabled else ""),
         )
         watchdog.start()
+        command_task: asyncio.Task[None] | None = None
+        if "telegram" in settings.channels:
+            command_task = asyncio.create_task(Commands(TelegramInbox(client, settings), watcher).run())
         try:
             await watcher.run(stop)
         finally:
+            if command_task is not None:
+                command_task.cancel()
+                await asyncio.gather(command_task, return_exceptions=True)
             watchdog.stop()
             # SIGTERM lets the cycle in flight finish; the state is written once more before leaving.
             await store.save()

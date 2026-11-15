@@ -64,6 +64,13 @@ class _Batch:
     pending: int = 0  # not scored yet (job page or LLM down): neither sent nor marked, so a later run scores them
 
 
+@dataclass(frozen=True)
+class DigestResult:
+    sent: int  # jobs scored MIN_SCORE or more, delivered
+    checked: int  # jobs not seen yet that this digest looked at (up to MAX_PER_MESSAGE)
+    pending: int  # of those, the ones left without a score for now
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -103,6 +110,8 @@ class Watcher:
         self._page_failures: dict[str, int] = {}
         self._failing_since: datetime | None = None
         self._down_alert_sent = False
+        self._lock = asyncio.Lock()
+        self.last_cycle_at: datetime | None = None
         # Not at boot: a deploy starts the cycle only, and the first digest comes DIGEST_EVERY later.
         self._next_digest = clock() + DIGEST_EVERY
 
@@ -111,7 +120,8 @@ class Watcher:
             for step in (self.digest_if_due, self.cycle):
                 self._heartbeat()  # alive: the longest silence is one step or one sleep, never both
                 try:
-                    await step()
+                    async with self._lock:
+                        await step()
                 except Exception:
                     # A bug in one step must not end the worker: the next loop starts clean.
                     logger.exception("%s failed", step.__name__)
@@ -145,6 +155,7 @@ class Watcher:
             await self._notify(list(new.values()), now)
         if self._store.prune(now) or state_changed:
             await self._store.save()
+        self.last_cycle_at = now
         # A quiet cycle logs at DEBUG; the digest line every 6 hours shows the worker is alive.
         logger.log(
             logging.INFO if new or failed else logging.DEBUG,
@@ -154,30 +165,46 @@ class Watcher:
             len(new),
         )
 
+    @property
+    def next_digest_at(self) -> datetime:
+        return self._next_digest
+
     async def digest_if_due(self) -> None:
-        """Every DIGEST_EVERY: scores up to MAX_PER_MESSAGE jobs of any date not seen yet and sends, in one
-        message, the ones scored MIN_SCORE or more. None of them: no message."""
+        """Every DIGEST_EVERY: the digest. When it fails it stays due, and the next loop tries again."""
         now = self._clock()
         if now < self._next_digest:
             return
+        if await self._digest(now) is not None:
+            self._next_digest = now + DIGEST_EVERY
+
+    async def digest_now(self) -> DigestResult | None:
+        """The digest on request (/resumo on Telegram). The 6-hour clock does not move: the next automatic
+        digest keeps its time. None: the source or every channel is down."""
+        async with self._lock:
+            return await self._digest(self._clock())
+
+    async def _digest(self, now: datetime) -> DigestResult | None:
+        """Scores up to MAX_PER_MESSAGE jobs of any date not seen yet and sends, in one message, the ones
+        scored MIN_SCORE or more. None of them: no message. None: the source or every channel is down."""
         answered = await self._read_searches(None)
         if not answered:
-            return  # source down: the next loop tries again
+            return None
         unseen: dict[str, Job] = {}
         for _, jobs in answered:
             for job in jobs:
                 if not self._store.is_seen(job.key):
                     unseen.setdefault(job.key, job)
-        batch = await self._assess(list(unseen.values())[:MAX_PER_MESSAGE], now)
+        checked = list(unseen.values())[:MAX_PER_MESSAGE]
+        batch = await self._assess(checked, now)
         if batch.jobs:
             message = job_message(batch.jobs, batch.scores, batch.tailored)
             channel = await self._dispatcher.deliver(message)
             if channel is None:
-                return  # left unmarked and still due: the next loop tries again
+                return None  # left unmarked: the jobs go out in a later run
             self._store.mark(message.keys, now)
             await self._store.save()
-        self._next_digest = now + DIGEST_EVERY
         logger.info("Digest done: %d job(s) sent of %d not seen yet", len(batch.jobs), len(unseen))
+        return DigestResult(len(batch.jobs), len(checked), batch.pending)
 
     async def _read_searches(self, window_seconds: int | None) -> list[tuple[str, list[Job]]]:
         """Each search that answered, with its jobs. A failed search is logged and left out.
