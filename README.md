@@ -17,7 +17,9 @@ It does not apply for you, does not list every job, and needs no database.
 ```
 every 6 hours, never at boot: digest
   for each search: Easy Apply jobs of any date (no f_TPR), up to 3 pages
-  score up to 10 not seen yet; send the ones scored 50 or more in one message; none of them: no message
+  score the jobs not seen yet 10 at a time until a round has one scored 50 or more (at most 5 rounds,
+  50 scores); send that round's 50+ in one message; none after 5 rounds: no message
+  /resumo on Telegram runs the same digest now, without moving the 6-hour clock
 
 every ~30 min (±20%)
   for each search (max 3): Easy Apply jobs posted in the last hour (f_AL=true, f_TPR=r3600), all pages
@@ -124,8 +126,16 @@ The worker sends only to `WHATSAPP_TO`. It never reads contacts and never answer
    works) and copy `message.chat.id` into `TELEGRAM_CHAT_ID`. Only a number is accepted, not a `@name`.
 4. Optional: `NOTIFY_PRIMARY=telegram` to try it first.
 
-The worker only sends to `TELEGRAM_CHAT_ID`; it never reads the bot's messages, so there is no webhook and
-no port. If the token leaks, send `/revoke` to @BotFather and set the new one.
+Commands, typed in the bot's chat:
+- `/resumo`: runs the digest now. The jobs arrive through the usual channels; the bot answers with how many
+  went out. Once per 30 min (each run spends up to 50 LLM scores), and the 6-hour digest keeps its time.
+- `/status` (or `/start`): when the last cycle ran and when the next automatic digest comes.
+
+The worker reads the bot's messages by long polling (`getUpdates`), so there is no webhook and no port. Only a
+message from `TELEGRAM_CHAT_ID` counts; any other chat is ignored. In a group, every member can send
+`/resumo`. A command sent while the worker was down is dropped. Two instances reading the same bot (a deploy
+overlap) get a 409 for a moment; the worker waits 30 s and reads again. If the token leaks, send `/revoke` to
+@BotFather and set the new one.
 
 ## Running locally
 

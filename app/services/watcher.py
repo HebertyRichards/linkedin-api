@@ -29,6 +29,10 @@ CYCLE_WINDOW_SECONDS = 3600
 # The digest reads jobs of any date: it lists what fits the resume, however old the posting. Every 6 hours,
 # never at boot: each digest scores up to 10 jobs not seen yet, and the LLM free quota has to last the day.
 DIGEST_EVERY = timedelta(hours=6)
+# A digest scores the unseen jobs 10 at a time and goes on until one scores MIN_SCORE or more (the ones below
+# are marked as seen, so each round moves forward). At most this many rounds: each one spends up to 10 LLM
+# scores and 10 job pages on LinkedIn.
+MAX_DIGEST_ROUNDS = 5
 # A job page failing this many times without a block (broken page) is given up: marked as seen, never sent.
 _MAX_PAGE_FAILURES = 3
 # Bound for the failure counts; past it they are forgotten (worst case a broken page gets 3 more tries).
@@ -67,7 +71,7 @@ class _Batch:
 @dataclass(frozen=True)
 class DigestResult:
     sent: int  # jobs scored MIN_SCORE or more, delivered
-    checked: int  # jobs not seen yet that this digest looked at (up to MAX_PER_MESSAGE)
+    checked: int  # jobs not seen yet that this digest looked at (up to MAX_DIGEST_ROUNDS x MAX_PER_MESSAGE)
     pending: int  # of those, the ones left without a score for now
 
 
@@ -184,8 +188,10 @@ class Watcher:
             return await self._digest(self._clock())
 
     async def _digest(self, now: datetime) -> DigestResult | None:
-        """Scores up to MAX_PER_MESSAGE jobs of any date not seen yet and sends, in one message, the ones
-        scored MIN_SCORE or more. None of them: no message. None: the source or every channel is down."""
+        """Scores the jobs of any date not seen yet, MAX_PER_MESSAGE at a time, until a round has one scored
+        MIN_SCORE or more, and sends that round's in one message. A round with a job left unscored (job page or
+        LLM down) ends the digest: the next rounds would fail too. Nothing from MIN_SCORE up after
+        MAX_DIGEST_ROUNDS: no message. None: the source or every channel is down."""
         answered = await self._read_searches(None)
         if not answered:
             return None
@@ -194,8 +200,17 @@ class Watcher:
             for job in jobs:
                 if not self._store.is_seen(job.key):
                     unseen.setdefault(job.key, job)
-        checked = list(unseen.values())[:MAX_PER_MESSAGE]
-        batch = await self._assess(checked, now)
+        queue = list(unseen.values())[: MAX_DIGEST_ROUNDS * MAX_PER_MESSAGE]
+        batch = _Batch([])
+        checked = pending = 0
+        for start in range(0, len(queue), MAX_PER_MESSAGE):
+            self._heartbeat()  # a round can take long (LLM per-minute limit): the watchdog must not see a stall
+            group = queue[start : start + MAX_PER_MESSAGE]
+            batch = await self._assess(group, now)
+            checked += len(group)
+            pending += batch.pending
+            if batch.jobs or batch.pending:
+                break
         if batch.jobs:
             message = job_message(batch.jobs, batch.scores, batch.tailored)
             channel = await self._dispatcher.deliver(message)
@@ -203,8 +218,8 @@ class Watcher:
                 return None  # left unmarked: the jobs go out in a later run
             self._store.mark(message.keys, now)
             await self._store.save()
-        logger.info("Digest done: %d job(s) sent of %d not seen yet", len(batch.jobs), len(unseen))
-        return DigestResult(len(batch.jobs), len(checked), batch.pending)
+        logger.info("Digest done: %d job(s) sent, %d scored of %d not seen yet", len(batch.jobs), checked, len(unseen))
+        return DigestResult(len(batch.jobs), checked, pending)
 
     async def _read_searches(self, window_seconds: int | None) -> list[tuple[str, list[Job]]]:
         """Each search that answered, with its jobs. A failed search is logged and left out.

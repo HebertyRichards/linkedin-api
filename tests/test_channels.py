@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.channels.email import EmailNotifier
-from app.channels.telegram import MAX_TEXT, TelegramNotifier, chunks
+from app.channels.telegram import MAX_TEXT, TelegramInbox, TelegramNotifier, chunks
 from app.channels.whatsapp import WhatsAppNotifier
 from app.config.logging_config import setup_logging
 from app.errors import ChannelRejectedError, ChannelUnavailableError
@@ -364,3 +364,38 @@ async def test_every_configured_channel_gets_its_notifier_primary_first() -> Non
 
     assert [channel.name for channel in channels] == ["telegram", "email", "whatsapp"]
     assert isinstance(channels[0], TelegramNotifier)
+
+
+def update(update_id: int, text: str, chat_id: int = 987654321) -> dict[str, object]:
+    return {"update_id": update_id, "message": {"chat": {"id": chat_id}, "text": text}}
+
+
+async def test_telegram_inbox_skips_the_backlog_and_reads_only_the_owner_chat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    offsets: list[str] = []
+    answers = [[update(7, "/resumo")], [update(8, "/status"), update(9, "/resumo", chat_id=111)]]
+
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        offsets.append(form(request)["offset"])
+        return httpx.Response(200, json={"ok": True, "result": answers.pop(0)})
+
+    async with client_for(telegram(on_call)) as client:
+        inbox = TelegramInbox(client, make_settings(**TELEGRAM), poll_seconds=0)
+        assert await inbox.receive() == []  # sent while the worker was down: never runs
+        assert await inbox.receive() == ["/status"]
+
+    assert offsets == ["-1", "8"]
+    assert "another chat ignored" in caplog.text
+
+
+async def test_telegram_inbox_409_is_unavailable_without_the_token() -> None:
+    def on_call(method: str, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"ok": False, "description": "Conflict"})
+
+    async with client_for(telegram(on_call)) as client:
+        with pytest.raises(ChannelUnavailableError, match="409") as error:
+            await TelegramInbox(client, make_settings(**TELEGRAM)).receive()
+
+    assert TELEGRAM_TOKEN not in str(error.value)

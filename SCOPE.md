@@ -282,8 +282,7 @@ o PDF do currículo ajustado chegam numa conversa com um robô seu.
     resposta de erro;
   - quem tem o token controla o robô (manda mensagem como ele), mas não a sua conta pessoal do Telegram.
     Se vazar: @BotFather → `/revoke`.
-- **Fora do escopo:** comandos no robô (`/pausar`, botões), resposta a mensagens e qualquer leitura de
-  updates. Tudo isso exigiria ler mensagens de qualquer pessoa que achar o robô.
+- **Comandos:** ver D7. Continuam fora do escopo `/pausar`, botões e resposta a texto livre.
 
 ### D6. Só vaga com nota 50 ou mais (2026-11-14, pedido do autor)
 
@@ -297,8 +296,25 @@ Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
 - **IA obrigatória:** sem `LLM_API_KEY` e currículo o worker não sobe, porque sem nota não há o que mandar.
 - **Os ids vistos ficam 1 ano** (eram 30 dias): com vagas de qualquer data, 30 dias faria vaga antiga
   voltar, ganhar nota e ser enviada de novo. Um ano de ids fica bem abaixo de 1 MB.
-- **Custo de cota:** cada resumo dá nota a no máximo 10 vagas; com a maioria abaixo de 50, um resumo pode
-  não mandar nada e ainda assim gastar 10 notas. O acervo antigo vai sendo coberto aos poucos, 10 por vez.
+- **Resumo em rodadas (2026-11-14):** o resumo dá nota de 10 em 10 vagas ainda não vistas até uma rodada ter
+  pelo menos uma com 50 ou mais, e manda as daquela rodada. As abaixo de 50 viram vistas, então cada rodada
+  anda para a frente. No máximo 5 rodadas (50 notas e 50 páginas de vaga no LinkedIn); uma rodada com vaga
+  sem nota (IA ou LinkedIn fora) encerra o resumo, porque as próximas falhariam também.
+- **Custo de cota:** um resumo sem nenhuma vaga 50+ gasta até 50 notas; 4 resumos por dia, até 200 notas,
+  fora o ciclo e os `/resumo`. O limite de 5 rodadas existe para a cota grátis durar o dia.
+
+### D7. Comandos no Telegram (2026-11-14, pedido do autor)
+
+- **`/resumo`** roda o resumo na hora; **`/status`** (e `/start`) diz quando foi o último ciclo e quando sai
+  o próximo resumo automático. As vagas saem pelos canais de sempre; o robô só responde um resumo em texto.
+- **O relógio de 6h não muda:** um `/resumo` não adia nem adianta o resumo automático.
+- **Um `/resumo` a cada 30 min:** cada um gasta até 50 notas e lê todas as buscas no LinkedIn.
+- **Leitura por long polling (`getUpdates`),** sem webhook nem porta aberta. Só conta mensagem do
+  `TELEGRAM_CHAT_ID`; de outro chat é ignorada sem resposta. Num grupo, qualquer membro pode mandar comando.
+- **Deploy não roda comando antigo:** no boot o robô pula o que chegou com ele desligado.
+- **Um lock** impede o resumo manual de rodar junto com o ciclo: um espera o outro terminar.
+- **Custo:** duas instâncias lendo o mesmo robô (sobreposição no deploy) recebem 409 por um momento; o robô
+  espera 30 s e lê de novo.
 
 ---
 
@@ -644,6 +660,11 @@ Os comentários ficam em inglês e enxutos.
   - [ ] Um resumo acima de 4096 caracteres chega inteiro, em mais de uma mensagem.
   - [ ] Com o robô bloqueado ou o token revogado, o aviso sai pela reserva no mesmo ciclo.
   - [ ] O token não aparece em nenhuma linha de log, nem nos erros.
+- **Resumo e comandos (D6, D7):**
+  - [ ] Com as 10 primeiras vagas abaixo de 50, o resumo dá nota às 10 seguintes, até 5 rodadas.
+  - [ ] `/resumo` no chat roda o resumo e responde quantas vagas saíram; o resumo de 6h mantém o horário.
+  - [ ] Um segundo `/resumo` em menos de 30 min responde quanto falta, sem rodar.
+  - [ ] Mensagem de outro chat não roda nada nem recebe resposta.
 
 ## 10. Fora do escopo do v1
 

@@ -10,8 +10,8 @@ from app.services.watcher import DigestResult
 
 logger = logging.getLogger(__name__)
 
-# Each /resumo spends up to 10 LLM scores and reads every search on LinkedIn: more often than this, the free
-# quota runs out and LinkedIn starts answering 429.
+# Each /resumo spends up to 50 LLM scores (MAX_DIGEST_ROUNDS rounds of 10) and reads every search on LinkedIn:
+# more often than this, the free quota runs out and LinkedIn starts answering 429.
 MANUAL_DIGEST_COOLDOWN = timedelta(minutes=30)
 # Pause after Telegram fails or another instance reads the bot (a deploy overlap), before reading again.
 ERROR_PAUSE_SECONDS = 30.0

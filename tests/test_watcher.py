@@ -204,6 +204,70 @@ async def test_digest_with_nothing_from_50_up_sends_no_message() -> None:
     assert source.detail_calls == [job(1).key, job(2).key]  # scored once: marked, never scored again
 
 
+async def test_digest_scores_10_more_until_one_job_scores_50_or_more() -> None:
+    email = FakeNotifier("email")
+    clock = Clock()
+    store = SeenStore(None)
+    source = FakeSource([[job(n) for n in range(25)]])
+    scores = {job(n).key: assessment(30) for n in range(25)}
+    scores[job(15).key] = assessment(80)
+    watcher = make_watcher(source, [email], store=store, clock=clock, assessor=FakeAssessor(scores))
+
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+
+    assert [message.keys for message in email.sent] == [(job(15).key,)]
+    assert len(source.detail_calls) == 20  # 2 rounds of 10: the third is never scored
+    assert store.is_seen(job(0).key) and not store.is_seen(job(20).key)
+
+
+async def test_digest_stops_after_5_rounds_without_a_job_from_50_up() -> None:
+    email = FakeNotifier("email")
+    clock = Clock()
+    store = SeenStore(None)
+    source = FakeSource([[job(n) for n in range(60)]])
+    watcher = make_watcher(source, [email], store=store, clock=clock, assessor=FakeAssessor({}, default=assessment(30)))
+
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+
+    assert email.sent == []
+    assert len(source.detail_calls) == 50
+    assert not store.is_seen(job(55).key)
+
+
+async def test_digest_stops_at_a_round_with_a_job_left_unscored() -> None:
+    clock = Clock()
+    source = FakeSource([[job(n) for n in range(25)]])
+    scores = {job(n).key: assessment(30) for n in range(25) if n != 3}  # job 3: the LLM did not answer
+    watcher = make_watcher(source, [FakeNotifier("email")], clock=clock, assessor=FakeAssessor(scores))
+
+    result = await watcher.digest_now()
+
+    assert result is not None and (result.sent, result.checked, result.pending) == (0, 10, 1)
+    assert len(source.detail_calls) == 10
+
+
+async def test_digest_now_keeps_the_six_hour_clock() -> None:
+    email = FakeNotifier("email")
+    clock = Clock()
+    source = FakeSource([[job(1)], [job(1), job(2)]])
+    watcher = make_watcher(source, [email], clock=clock)
+
+    clock.advance(minutes=60)
+    result = await watcher.digest_now()
+    assert result is not None and result.sent == 1
+
+    clock.advance(minutes=300)  # 6 hours after the boot, 5 after /resumo
+    await watcher.digest_if_due()
+    assert [message.keys for message in email.sent] == [(job(1).key,), (job(2).key,)]
+
+
+async def test_digest_now_is_none_when_the_source_is_down() -> None:
+    source = FakeSource([SourceUnavailableError("429", blocked=True)])
+    assert await make_watcher(source, [FakeNotifier("email")]).digest_now() is None
+
+
 async def test_cycle_reads_the_last_hour() -> None:
     source = FakeSource([[]])
     await make_watcher(source, [FakeNotifier("email")]).cycle()
