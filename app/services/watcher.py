@@ -33,6 +33,8 @@ DIGEST_EVERY = timedelta(hours=6)
 # are marked as seen, so each round moves forward). At most this many rounds: each one spends up to 10 LLM
 # scores and 10 job pages on LinkedIn.
 MAX_DIGEST_ROUNDS = 5
+# /vagas on Telegram: this many jobs of any date, each with its score, whatever the score.
+LIST_SIZE = 20
 # A job page failing this many times without a block (broken page) is given up: marked as seen, never sent.
 _MAX_PAGE_FAILURES = 3
 # Bound for the failure counts; past it they are forgotten (worst case a broken page gets 3 more tries).
@@ -73,6 +75,20 @@ class DigestResult:
     sent: int  # jobs scored MIN_SCORE or more, delivered
     checked: int  # jobs not seen yet that this digest looked at (up to MAX_DIGEST_ROUNDS x MAX_PER_MESSAGE)
     pending: int  # of those, the ones left without a score for now
+
+
+@dataclass
+class _Pages:
+    """The job pages of one run: spaced from each other, and none after a block."""
+
+    fetched: int = 0
+    blocked: bool = False
+
+
+@dataclass(frozen=True)
+class ListResult:
+    shown: int  # jobs listed in the message
+    scored: int  # of those, the ones with a score (the others: job page or LLM down)
 
 
 def _utc_now() -> datetime:
@@ -187,6 +203,49 @@ class Watcher:
         async with self._lock:
             return await self._digest(self._clock())
 
+    async def list_now(self) -> ListResult | None:
+        """/vagas on Telegram: the first LIST_SIZE jobs of any date, seen or not, each with its score, best first.
+        Only a view: no resume is tailored and only a closed job (left out of the list) is marked as seen, so the
+        cycle and the digest go on as before: a job from MIN_SCORE up still comes in the digest, with its resume.
+        None: the source or every channel is down."""
+        async with self._lock:
+            answered = await self._read_searches(None)
+            if not answered:
+                return None
+            pool: dict[str, Job] = {}
+            for _, jobs in answered:
+                for job in jobs:
+                    pool.setdefault(job.key, job)
+            listed: list[Job] = []
+            scores: dict[str, Assessment] = {}
+            closed: list[str] = []
+            pages = _Pages()
+            for job in pool.values():
+                if len(listed) == LIST_SIZE:
+                    break
+                self._heartbeat()  # 20 job pages and scores can take long: the watchdog must not see a stall
+                assessment = self._assessor.cached(job)
+                if assessment is None:
+                    details = await self._page(job, pages)  # None: listed without a score
+                    if details is not None and details.closed:
+                        closed.append(job.key)  # marked, so the next /vagas does not open its page again
+                        continue
+                    if details is not None:
+                        assessment = await self._assessor.assess(job, details)
+                listed.append(job)
+                if assessment is not None:
+                    scores[job.key] = assessment
+            if closed:
+                self._store.mark(closed, self._clock())
+                await self._store.save()
+            if listed:
+                listed.sort(key=lambda job: scores[job.key].score if job.key in scores else -1, reverse=True)
+                message = job_message(listed, scores, heading=f"{len(listed)} vagas, todas as notas")
+                if await self._dispatcher.deliver(message) is None:
+                    return None
+            logger.info("List done: %d job(s) sent, %d scored", len(listed), len(scores))
+            return ListResult(len(listed), len(scores))
+
     async def _digest(self, now: datetime) -> DigestResult | None:
         """Scores the jobs of any date not seen yet, MAX_PER_MESSAGE at a time, until a round has one scored
         MIN_SCORE or more, and sends that round's in one message. A round with a job left unscored (job page or
@@ -255,34 +314,27 @@ class Watcher:
         tailored: dict[str, TailoredFile] = {}
         closed: set[str] = set()
         pending = 0
-        blocked = False
-        fetched = 0
+        pages = _Pages()
         for job in jobs:
             assessment = self._assessor.cached(job)
             details = None
-            if assessment is None and not blocked:
-                if fetched:
-                    await asyncio.sleep(random.uniform(*self._job_page_spacing))  # noqa: S311
-                fetched += 1
-                try:
-                    details = await self._source.fetch_details(job)
-                except SourceUnavailableError as e:
-                    logger.warning("Job page of %s unavailable: %s", job.key, e)
-                    blocked = e.blocked  # a block stops the job pages for the rest of this batch
-                    if not blocked and self._page_failed(job):
+            if assessment is None and not pages.blocked:
+                details = await self._page(job, pages)
+                if details is None:
+                    if not pages.blocked and self._page_failed(job):
                         closed.add(job.key)
                         continue
+                elif details.closed:
+                    closed.add(job.key)  # no score needed: it is dropped, so no quota spent
+                    continue
                 else:
-                    if details.closed:
-                        closed.add(job.key)  # no score needed: it is dropped, so no quota spent
-                        continue
                     assessment = await self._assessor.assess(job, details)
             if assessment is None:
                 pending += 1
                 continue
             scores[job.key] = assessment
             if assessment.score >= MIN_SCORE and assessment.workplace != "onsite":
-                resume = await self._tailored(job, details)
+                resume = await self._tailored(job, details, pages)
                 if resume is not None:
                     tailored[job.key] = resume
         onsite = {key for key, assessment in scores.items() if assessment.workplace == "onsite"}
@@ -304,6 +356,21 @@ class Watcher:
         kept.sort(key=lambda job: scores[job.key].score, reverse=True)
         return _Batch(kept, scores, tailored, pending)
 
+    async def _page(self, job: Job, pages: _Pages) -> JobDetails | None:
+        """The job page, spaced from the run's previous one. None: unavailable, or a block earlier in the run
+        (a block stops the job pages for the rest of the run)."""
+        if pages.blocked:
+            return None
+        if pages.fetched:
+            await asyncio.sleep(random.uniform(*self._job_page_spacing))  # noqa: S311
+        pages.fetched += 1
+        try:
+            return await self._source.fetch_details(job)
+        except SourceUnavailableError as e:
+            logger.warning("Job page of %s unavailable: %s", job.key, e)
+            pages.blocked = e.blocked
+            return None
+
     def _page_failed(self, job: Job) -> bool:
         """Counts a job page failure that was not a block. True when the job is given up."""
         if len(self._page_failures) > _FAILURES_LIMIT:
@@ -316,11 +383,17 @@ class Watcher:
         del self._page_failures[job.key]
         return True
 
-    async def _tailored(self, job: Job, details: JobDetails | None) -> TailoredFile | None:
+    async def _tailored(self, job: Job, details: JobDetails | None, pages: _Pages) -> TailoredFile | None:
         if self._tailor is None:
             return None
-        # Without the page (the score came from the cache) only an already built file can be used.
-        return self._tailor.cached(job) if details is None else await self._tailor.tailor(job, details)
+        if details is None:  # the score came from the cache: the file built then, or the page to build one now
+            cached = self._tailor.cached(job)
+            if cached is not None:
+                return cached
+            details = await self._page(job, pages)  # scored without a file (/vagas, or the LLM was down)
+            if details is None or details.closed:
+                return None
+        return await self._tailor.tailor(job, details)
 
     async def _notify(self, jobs: list[Job], now: datetime) -> None:
         batch = await self._assess(jobs, now)

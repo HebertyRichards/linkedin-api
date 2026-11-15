@@ -20,6 +20,7 @@ every 6 hours, never at boot: digest
   score the jobs not seen yet 10 at a time until a round has one scored 50 or more (at most 5 rounds,
   50 scores); send that round's 50+ in one message; none after 5 rounds: no message
   /resumo on Telegram runs the same digest now, without moving the 6-hour clock
+  /vagas on Telegram lists 20 jobs of any date with their scores, whatever the score; marks nothing but closed jobs
 
 every ~30 min (±20%)
   for each search (max 3): Easy Apply jobs posted in the last hour (f_AL=true, f_TPR=r3600), all pages
@@ -129,6 +130,9 @@ The worker sends only to `WHATSAPP_TO`. It never reads contacts and never answer
 Commands, typed in the bot's chat:
 - `/resumo`: runs the digest now. The jobs arrive through the usual channels; the bot answers with how many
   went out. Once per 30 min (each run spends up to 50 LLM scores), and the 6-hour digest keeps its time.
+- `/vagas`: lists 20 jobs of any date (seen or not), each with its score, best first, whatever the score. Only
+  a view: no resume is tailored and only a closed job (left out) is marked as seen, so a job from 50 up still
+  comes in the digest, which builds its resume. Up to 20 LLM scores (a job scored before in this run costs none); once per 30 min.
 - `/status` (or `/start`): when the last cycle ran and when the next automatic digest comes.
 
 The worker reads the bot's messages by long polling (`getUpdates`), so there is no webhook and no port. Only a

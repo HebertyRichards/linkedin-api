@@ -268,6 +268,56 @@ async def test_digest_now_is_none_when_the_source_is_down() -> None:
     assert await make_watcher(source, [FakeNotifier("email")]).digest_now() is None
 
 
+async def test_vagas_lists_20_jobs_with_any_score_best_first_and_marks_nothing() -> None:
+    email = FakeNotifier("email")
+    store = SeenStore(None)
+    source = FakeSource([[job(n) for n in range(25)]])
+    scores = {job(n).key: assessment(n * 4) for n in range(25)}  # job 19 scores 76, job 0 scores 0
+    tailor = FakeTailor()
+    watcher = make_watcher(source, [email], store=store, assessor=FakeAssessor(scores), tailor=tailor)
+
+    result = await watcher.list_now()
+
+    assert result is not None and (result.shown, result.scored) == (20, 20)
+    [message] = email.sent
+    assert message.keys == tuple(job(n).key for n in range(19, -1, -1))
+    assert message.subject == "20 vagas, todas as notas"
+    assert RESUME_DOWN not in message.text  # no resume in a list: the digest still sends it
+    assert tailor.calls == [] and not any(store.is_seen(job(n).key) for n in range(25))
+
+
+async def test_vagas_with_the_job_pages_blocked_lists_them_without_a_score() -> None:
+    email = FakeNotifier("email")
+    source = FakeSource([[job(1), job(2), job(3)]], details=SourceUnavailableError("429", blocked=True))
+    assessor = FakeAssessor({}, cache={job(3).key: assessment(70)})
+    watcher = make_watcher(source, [email], assessor=assessor)
+
+    result = await watcher.list_now()
+
+    assert result is not None and (result.shown, result.scored) == (3, 1)
+    assert email.sent[0].keys == (job(3).key, job(1).key, job(2).key)
+    assert source.detail_calls == [job(1).key]  # a block stops the job pages; job 3 came from the cache
+
+
+async def test_a_job_scored_by_vagas_still_gets_its_resume_in_the_digest() -> None:
+    email = FakeNotifier("email")
+    source = FakeSource([[job(1)]])
+    tailor = FakeTailor()
+    # Scored before without a file (by /vagas): the digest opens the page once to build it.
+    assessor = FakeAssessor({}, cache={job(1).key: assessment(80)})
+    watcher = make_watcher(source, [email], assessor=assessor, tailor=tailor)
+
+    await watcher.digest_now()
+
+    assert tailor.calls == [job(1).key] and source.detail_calls == [job(1).key]
+    assert RESUME_DOWN not in email.sent[0].text and len(email.sent[0].attachments) == 1
+
+
+async def test_vagas_is_none_when_the_source_is_down() -> None:
+    source = FakeSource([SourceUnavailableError("429", blocked=True)])
+    assert await make_watcher(source, [FakeNotifier("email")]).list_now() is None
+
+
 async def test_cycle_reads_the_last_hour() -> None:
     source = FakeSource([[]])
     await make_watcher(source, [FakeNotifier("email")]).cycle()

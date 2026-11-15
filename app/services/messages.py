@@ -56,10 +56,9 @@ _BUTTON = (
 )
 
 
-def _card(job: Job, assessment: Assessment | None, tailored: TailoredFile | None) -> str:
+def _card(job: Job, assessment: Assessment | None, preview: list[str]) -> str:
     score = f'<div style="font-size:13px;color:#1a4d8f"><b>{assessment.score}/100</b></div>' if assessment else ""
     lines = "".join(f'<div style="margin-top:4px">{escape(line)}</div>' for line in _score_lines(assessment))
-    preview = _resume_lines(tailored, assessment)
     resume = (
         f'<div style="{_PREVIEW}"><b>{escape(preview[0])}</b>'
         + "".join(f"<br>{escape(line)}" for line in preview[1:])
@@ -80,13 +79,13 @@ def _tg(text: str) -> str:
     return escape(text, quote=False)
 
 
-def _telegram_block(job: Job, assessment: Assessment | None, tailored: TailoredFile | None) -> str:
+def _telegram_block(job: Job, assessment: Assessment | None, preview: list[str]) -> str:
     href = _tg(job.url).replace('"', "&quot;")
     lines = (
         f"<b>{_tg(job.title)}</b>",
         _tg(_details(job)),
         *map(_tg, _score_lines(assessment)),
-        *map(_tg, _resume_lines(tailored, assessment)),
+        *map(_tg, preview),
         f'<a href="{href}">Ver vaga e se candidatar</a>',
     )
     return "\n".join(line for line in lines if line)
@@ -96,13 +95,22 @@ def job_message(
     jobs: Sequence[Job],
     assessments: Mapping[str, Assessment] | None = None,
     tailored: Mapping[str, TailoredFile] | None = None,
+    *,
+    heading: str | None = None,
 ) -> Message:
-    """No clock in the text: a repeat of the same jobs, scores and files gives the same body and key."""
+    """No clock in the text: a repeat of the same jobs, scores and files gives the same body and key.
+    `heading`: a list on request (/vagas), with that title instead of "new jobs" and no resume lines."""
     scores = assessments or {}
     files = tailored or {}
     keys = tuple(job.key for job in jobs)
+    listing = heading is not None  # read before the default heading below is set
 
-    if len(jobs) == 1:
+    def preview(job: Job) -> list[str]:
+        return [] if listing else _resume_lines(files.get(job.key), scores.get(job.key))
+
+    if heading is not None:
+        subject = heading
+    elif len(jobs) == 1:
         job = jobs[0]
         score = f" ({scores[job.key].score}/100)" if job.key in scores else ""
         subject = f"Nova vaga Easy Apply{score}: {job.title}" + (f" · {job.company}" if job.company else "")
@@ -118,7 +126,7 @@ def job_message(
                 f"*{job.title}*",
                 _details(job),
                 *_score_lines(scores.get(job.key)),
-                *_resume_lines(files.get(job.key), scores.get(job.key)),
+                *preview(job),
                 job.url,
             )
             if line
@@ -135,10 +143,10 @@ def job_message(
         subject=subject,
         text=text,
         html=f'<h2 style="font-family:Arial,sans-serif">{heading}</h2>'
-        + "".join(_card(job, scores.get(job.key), files.get(job.key)) for job in jobs),
+        + "".join(_card(job, scores.get(job.key), preview(job)) for job in jobs),
         telegram_blocks=(
             f"<b>{heading}</b>",
-            *(_telegram_block(job, scores.get(job.key), files.get(job.key)) for job in jobs),
+            *(_telegram_block(job, scores.get(job.key), preview(job)) for job in jobs),
         ),
         idempotency_key=f"jobs-{fingerprint.hexdigest()[:32]}",
         keys=keys,

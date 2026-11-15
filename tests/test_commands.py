@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from app.services.commands import HELP, Commands
-from app.services.watcher import DigestResult
+from app.services.watcher import DigestResult, ListResult
 from tests.helpers import Clock
 
 
@@ -22,10 +22,16 @@ class FakeRunner:
         self.next_digest_at = datetime(2026, 10, 25, 18, 0, tzinfo=UTC)
         self.result = result
         self.calls = 0
+        self.listing: ListResult | None = ListResult(shown=20, scored=18)
+        self.list_calls = 0
 
     async def digest_now(self) -> DigestResult | None:
         self.calls += 1
         return self.result
+
+    async def list_now(self) -> ListResult | None:
+        self.list_calls += 1
+        return self.listing
 
 
 async def test_resumo_runs_the_digest_and_answers_how_many_went_out() -> None:
@@ -66,3 +72,25 @@ async def test_status_and_unknown_text() -> None:
     assert "Próximo resumo automático: 25/10 18:00 UTC" in inbox.replies[0]
     assert "Último ciclo: ainda não rodou" in inbox.replies[0]
     assert inbox.replies[1] == HELP
+
+
+async def test_vagas_lists_and_has_its_own_cooldown() -> None:
+    clock = Clock()
+    inbox, runner = FakeInbox(), FakeRunner(DigestResult(sent=1, checked=10, pending=0))
+    commands = Commands(inbox, runner, clock=clock)
+
+    await commands.handle("/resumo")
+    await commands.handle("/vagas@MeuBot")  # right after /resumo: still runs
+    assert inbox.replies[-1] == "Lista pronta: 20 vaga(s), 2 sem nota (IA ou LinkedIn fora)."
+    clock.advance(minutes=5)
+    await commands.handle("/vagas")
+
+    assert (runner.calls, runner.list_calls) == (1, 1)
+    assert inbox.replies[-1] == "A lista rodou há pouco. Tente de novo em 25 min."
+
+
+async def test_vagas_with_the_source_down_says_so() -> None:
+    inbox, runner = FakeInbox(), FakeRunner(None)
+    runner.listing = None
+    await Commands(inbox, runner).handle("/vagas")
+    assert inbox.replies[-1].startswith("Não consegui listar as vagas agora")

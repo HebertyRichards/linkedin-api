@@ -309,6 +309,12 @@ Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
   o próximo resumo automático. As vagas saem pelos canais de sempre; o robô só responde um resumo em texto.
 - **O relógio de 6h não muda:** um `/resumo` não adia nem adianta o resumo automático.
 - **Um `/resumo` a cada 30 min:** cada um gasta até 50 notas e lê todas as buscas no LinkedIn.
+- **`/vagas` (2026-11-15):** lista 20 vagas de qualquer data, vistas ou não, com a nota de cada uma, da maior
+  para a menor, sem nota mínima. Só mostra: não gera currículo e só marca como vista a vaga encerrada, para
+  não tirar do resumo uma vaga 50+; o resumo abre a página dela de novo e gera o currículo. Vaga encerrada
+  fica de fora (e não é aberta de novo no próximo `/vagas`); com a
+  IA ou o LinkedIn fora, a vaga aparece sem nota. Até 20 notas e 20 páginas de vaga; uma nota já dada desde o
+  último boot não gasta cota. Um `/vagas` a cada 30 min, com relógio próprio (não bloqueia o `/resumo`).
 - **Leitura por long polling (`getUpdates`),** sem webhook nem porta aberta. Só conta mensagem do
   `TELEGRAM_CHAT_ID`; de outro chat é ignorada sem resposta. Num grupo, qualquer membro pode mandar comando.
 - **Deploy não roda comando antigo:** no boot o robô pula o que chegou com ele desligado.
@@ -664,6 +670,7 @@ Os comentários ficam em inglês e enxutos.
   - [ ] Com as 10 primeiras vagas abaixo de 50, o resumo dá nota às 10 seguintes, até 5 rodadas.
   - [ ] `/resumo` no chat roda o resumo e responde quantas vagas saíram; o resumo de 6h mantém o horário.
   - [ ] Um segundo `/resumo` em menos de 30 min responde quanto falta, sem rodar.
+  - [ ] `/vagas` manda 20 vagas com nota, da maior para a menor, inclusive abaixo de 50, sem marcar nada além das encerradas.
   - [ ] Mensagem de outro chat não roda nada nem recebe resposta.
 
 ## 10. Fora do escopo do v1
