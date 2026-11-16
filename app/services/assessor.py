@@ -32,12 +32,17 @@ Rules:
   as a different technology (AngularJS is not Angular).
 - A closely related technology (MySQL for PostgreSQL, Vitest for Jest) lowers the score much less than a
   missing one.
+- Technologies joined by "or"/"ou" ("Vue.js ou React") are alternatives: one of them meets the requirement
+  and the others are never gaps. Joined by "and"/"e" ("Vue.js e React"), each one is required.
+- Nice-to-have items (desejável, diferencial, plus, nice to have) lower the score much less than required
+  ones: missing nice-to-haves alone never make the score low.
 - A role that is not software development (sales, consulting, apprentice, support, operations) scores
   at most 10, whatever its text says.
 - A high score needs evidence: requirements the resume meets. A posting that asks for nothing technical
   is not a perfect fit for having nothing to miss: it scores at most 30.
 - The candidate looks for the levels in "Níveis buscados". A senior, lead, staff, principal or
-  specialist role scores at most 40.
+  specialist role scores at most 40. A range that includes a sought level ("pleno a sênior", "pleno
+  avançado a sênior", LinkedIn's "Mid-Senior level") is not a senior role: score it on its requirements.
 - workplace: "onsite" only when the job requires working at the office every day; "hybrid" when it
   mixes office and remote days; "remote" when fully remote; "unknown" when the posting does not say.
 - reasons: one short sentence in Brazilian Portuguese, at most 25 words, saying why the score.

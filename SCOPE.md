@@ -211,6 +211,14 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
   ("S3") nunca são cortados.
 - **Tecnologia parecida baixa menos que uma que falta** (MySQL para PostgreSQL, Vitest para Jest): regra no
   prompt, a pedido do autor (quem conhece uma se adapta à outra). Não medida isoladamente.
+- **"Ou" é alternativa, "e" é soma (2026-11-15):** "Vue.js ou React" se atende com uma das duas, e a outra
+  não é lacuna; "Vue.js e React" pede as duas. Item desejável (diferencial, plus) baixa bem menos que um
+  requisito. Regras no prompt, a pedido do autor: numa vaga de trampos.co a IA listava Vue como falta com
+  "Vue ou React" na vaga e React no currículo.
+- **Faixa de nível com pleno não é sênior (2026-11-15):** "pleno a sênior", "pleno avançado a sênior" e o
+  "Mid-Senior level" do LinkedIn não levam o limite de 40 de vaga sênior, a pedido do autor. Medido antes
+  da regra: a mesma vaga "pleno avançado a sênior" tirou 35, 65 e 70 (às vezes a IA aplicava o limite, às
+  vezes não), atravessando o corte de 50.
 - **Descrição cortada em 6.000 caracteres** (~1.500 tokens): cabe na cota por minuto sem perder os
   requisitos, que costumam vir no fim.
 - A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
