@@ -53,7 +53,7 @@ async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
         watchdog = Watchdog(stall_after(settings.poll_interval_seconds))
         watcher = Watcher(
             source=LinkedInGuestSource(client),
-            dispatcher=Dispatcher(build_channels(settings, client)),
+            dispatcher=Dispatcher(build_channels(settings, client), copy="email"),
             store=store,
             searches=settings.searches,
             location=settings.job_location,

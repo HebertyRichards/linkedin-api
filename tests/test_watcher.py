@@ -6,6 +6,7 @@ import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
 from app.schemas.job import JobDetails
+from app.services.dispatcher import Dispatcher
 from app.services.messages import RESUME_DOWN, job_message
 from app.services.watcher import excluded_terms, is_excluded
 from app.state.seen_store import SeenStore
@@ -55,6 +56,48 @@ async def test_unexpected_error_in_the_primary_still_reaches_the_fallback() -> N
     await watcher.cycle()
 
     assert [message.keys for message in email.sent] == [(job(1).key,)]
+
+
+async def test_email_gets_a_copy_of_what_the_primary_delivered() -> None:
+    telegram, email = FakeNotifier("telegram"), FakeNotifier("email")
+    message = job_message([job(1)], {})
+
+    assert await Dispatcher([telegram, email], copy="email").deliver(message) == "telegram"
+
+    assert telegram.sent == email.sent == [message]
+
+
+async def test_email_as_fallback_is_not_sent_twice() -> None:
+    telegram = FakeNotifier("telegram", fail_with=ChannelUnavailableError("down"))
+    email = FakeNotifier("email")
+    message = job_message([job(1)], {})
+
+    assert await Dispatcher([telegram, email], copy="email").deliver(message) == "email"
+
+    assert email.sent == [message]
+
+
+async def test_a_failed_copy_keeps_the_message_delivered() -> None:
+    telegram = FakeNotifier("telegram")
+    email = FakeNotifier("email", fail_with=ChannelUnavailableError("quota"))
+
+    assert await Dispatcher([telegram, email], copy="email").deliver(job_message([job(1)], {})) == "telegram"
+
+
+async def test_email_as_primary_leaves_the_other_channels_as_fallback_only() -> None:
+    email, telegram = FakeNotifier("email"), FakeNotifier("telegram")
+
+    await Dispatcher([email, telegram], copy="email").deliver(job_message([job(1)], {}))
+
+    assert telegram.sent == []
+
+
+async def test_a_command_reply_gets_no_copy() -> None:
+    telegram, email = FakeNotifier("telegram"), FakeNotifier("email")
+
+    await Dispatcher([telegram, email], copy="email").deliver(job_message([job(1)], {}), copy=False)
+
+    assert email.sent == []
 
 
 async def test_each_cycle_logs_a_summary(caplog: pytest.LogCaptureFixture) -> None:

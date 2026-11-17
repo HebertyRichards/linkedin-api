@@ -75,7 +75,7 @@ error names the missing variables and never prints their values.
 | `WHATSAPP_TO` | WhatsApp | — | Your number with country and area code (`5511999999999`) or a group id (`...@g.us`) |
 | `TELEGRAM_BOT_TOKEN` | Telegram | — | Bot token from @BotFather (secret) |
 | `TELEGRAM_CHAT_ID` | Telegram | — | Numeric id of your chat with the bot (a group id is negative) |
-| `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first (`email`, `whatsapp` or `telegram`); then email, WhatsApp, Telegram |
+| `NOTIFY_PRIMARY` | no | `whatsapp` | Channel tried first (`email`, `whatsapp` or `telegram`); then email, WhatsApp, Telegram. Email, when set, always gets a copy of the job alerts |
 | `POLL_INTERVAL_SECONDS` | no | `1800` | Seconds between cycles, minimum 60 |
 | `LLM_API_KEY` | yes | — | Job scoring: only jobs scored 50 or more go out. Free key at console.groq.com |
 | `RESUME_FILE` | yes (or `RESUME_YAML`) | — | Path of the resume YAML (git-ignored). Local runs |

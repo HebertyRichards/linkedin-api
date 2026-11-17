@@ -350,6 +350,8 @@ loop a cada POLL_INTERVAL_SECONDS ±20% (o próximo ciclo só começa quando o a
      nota 50 ou mais → uma mensagem por vaga; mais de 3 no mesmo ciclo vão juntas (até 10 por mensagem)
   3. despacho:
        canal principal (NOTIFY_PRIMARY) ─ falhou ou breaker aberto ─► canal reserva
+       email configurado: recebe sempre uma cópia do que outro canal entregou (falha na cópia só loga);
+                 se já foi tentado como reserva, não repete; resposta ao /vagas não tem cópia
        WhatsApp: antes de enviar, consulta GET /instance/connectionState/{instance};
                  se não estiver "open", pula direto para o email [V]
        aceito (2xx) → marca os ids como vistos → grava STATE_FILE (escreve num temp e renomeia)
@@ -528,7 +530,7 @@ Railway faz sempre é reiniciar quem sai com erro (política On Failure, até 10
 | `WHATSAPP_TO` | canal WhatsApp | — | seu número (`5511999999999`) ou grupo (`...@g.us`) | grupo: `GET /group/fetchAllGroups/{instance}` (README do whatsapp-automation) |
 | `TELEGRAM_BOT_TOKEN` | canal Telegram | — | token do robô (segredo) | Telegram → @BotFather → `/newbot` |
 | `TELEGRAM_CHAT_ID` | canal Telegram | — | sua conversa com o robô (número) | mande `/start` ao robô e abra `https://api.telegram.org/bot<token>/getUpdates` no navegador: `message.chat.id` |
-| `NOTIFY_PRIMARY` | não | `whatsapp` | canal tentado primeiro (`email`, `whatsapp` ou `telegram`; só importa com 2 ou mais) | — |
+| `NOTIFY_PRIMARY` | não | `whatsapp` | canal tentado primeiro (`email`, `whatsapp` ou `telegram`; só importa com 2 ou mais); o email, se configurado, recebe sempre uma cópia | — |
 | `POLL_INTERVAL_SECONDS` | não | `1800` | intervalo entre ciclos; mínimo 60 | — |
 | `STATE_FILE` | não | vazio = só memória | ex.: `/data/seen.json` num volume | Railway → serviço → Volumes → montar em `/data` |
 | `LOG_LEVEL` | não | `INFO` | — | — |

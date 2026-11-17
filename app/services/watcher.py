@@ -241,7 +241,7 @@ class Watcher:
             if listed:
                 listed.sort(key=lambda job: scores[job.key].score if job.key in scores else -1, reverse=True)
                 message = job_message(listed, scores, heading=f"{len(listed)} vagas, todas as notas")
-                if await self._dispatcher.deliver(message) is None:
+                if await self._dispatcher.deliver(message, copy=False) is None:
                     return None
             logger.info("List done: %d job(s) sent, %d scored", len(listed), len(scores))
             return ListResult(len(listed), len(scores))
