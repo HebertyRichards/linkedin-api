@@ -3,9 +3,9 @@
 Guide for AI agents (and humans) working in this repository. **These rules take precedence over any
 default behavior.** Goal: small changes in the style of the existing code, without overengineering.
 
-A single-process asyncio **worker**: it polls LinkedIn's public job search, keeps the new Easy Apply jobs and
-alerts by email (Resend), WhatsApp (Evolution API) or Telegram (Bot API). No HTTP server and no database. The decisions and
-their sources are in [SCOPE.md](SCOPE.md).
+A single-process asyncio **worker**: it polls LinkedIn's and Gupy's public job searches, scores the new jobs
+(any kind of application; it never applies) and alerts by email (Resend), WhatsApp (Evolution API) or Telegram
+(Bot API). No HTTP server and no database. The decisions and their sources are in [SCOPE.md](SCOPE.md).
 
 ## Non-negotiable principles
 
@@ -19,7 +19,8 @@ their sources are in [SCOPE.md](SCOPE.md).
    goes to an LLM, and test fixtures use made-up people only.
 5. **Keys only in headers**, never in a URL or query string.
 6. **Source data is untrusted.** It crosses `schemas/job.py` before anything else. Links are rebuilt from the
-   id, never copied.
+   id, never copied. The one exception is Gupy's career subdomain, taken from the page only after it is
+   validated as a single DNS label under `gupy.io`.
 7. **Never log in to LinkedIn and never send cookies.** No browser automation, no applying for jobs.
 8. **WhatsApp sends only to `WHATSAPP_TO`, Telegram only to `TELEGRAM_CHAT_ID`.** Nothing reads contacts,
    bot updates or replies to messages. The Telegram token sits in the request URL: never log a URL or `str()`
@@ -36,13 +37,15 @@ app/
   errors.py                # SourceUnavailableError, RetryableError, Channel*Error
   schemas/job.py           # Job, JobDetails, Assessment: the boundary for source and LLM data
   schemas/resume.py        # resume YAML without the contact block (the only part an LLM sees)
-  sources/                 # JobSource protocol + linkedin_guest (parser of the public search page)
+  sources/                 # JobSource protocol + linkedin_guest (public search page) + gupy_portal
+                           # (__NEXT_DATA__ JSON of portal.gupy.io, read by the cycle every 30 min)
   channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution) + telegram (Bot API)
   services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
                            # llm (chat client, one breaker per model), assessor (job score),
                            # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
-  utils/                   # circuit_breaker, retry, mask, watchdog (exit 1 on a stalled loop)
+  utils/                   # circuit_breaker, retry, mask, watchdog (exit 1 on a stalled loop),
+                           # search_query (NOT terms of a search, shared by the watcher and Gupy)
 tests/
 ```
 
@@ -54,7 +57,10 @@ tests/
 - **The dispatcher** only orders the channels.
 - **The watcher** only decides what is new and what is marked as seen. A job is marked **only after**
   a channel accepted it.
-- **New source or channel:** a class with the protocol's shape, wired in `main.py`. Nothing else changes.
+- **New source:** a class with the `JobSource` shape (`name`, `min_interval`, `fetch_recent`,
+  `fetch_details`), added to the `sources` list in `main.py`; its name goes in `Source` and `SOURCE_LABELS`
+  (`schemas/job.py`).
+- **New channel:** a class with the `Notifier` shape, wired in `main.py`. Nothing else changes.
 
 ## Mandatory validation
 

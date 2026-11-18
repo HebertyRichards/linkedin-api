@@ -6,13 +6,14 @@ notice. Requests carry no login and no cookies on purpose. See SCOPE.md, section
 
 import asyncio
 import logging
+from datetime import timedelta
 from html.parser import HTMLParser
 
 import httpx
 from pydantic import ValidationError
 
 from app.errors import SourceUnavailableError
-from app.schemas.job import Job, JobDetails
+from app.schemas.job import Job, JobDetails, Source
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.retry import parse_retry_after
 
@@ -170,6 +171,9 @@ def parse_cards(html: str) -> tuple[list[Job], int]:
 
 
 class LinkedInGuestSource:
+    name: Source = "linkedin"
+    min_interval: timedelta | None = None
+
     def __init__(self, client: httpx.AsyncClient, *, page_delay: float = 1.5) -> None:
         self._client = client
         self._page_delay = page_delay
@@ -214,7 +218,7 @@ class LinkedInGuestSource:
     async def _fetch_page(
         self, keywords: str, location: str, window_seconds: int | None, *, start: int
     ) -> tuple[list[Job], int]:
-        params = {"keywords": keywords, "location": location, "f_AL": "true", "start": str(start)}
+        params = {"keywords": keywords, "location": location, "start": str(start)}
         if window_seconds is not None:
             params["f_TPR"] = f"r{window_seconds}"
         try:

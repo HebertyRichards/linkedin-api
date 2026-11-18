@@ -4,7 +4,7 @@ from datetime import datetime
 from html import escape
 
 from app.channels.base import Message
-from app.schemas.job import Assessment, Job, clip
+from app.schemas.job import SOURCE_LABELS, Assessment, Job, Source, clip
 from app.services.tailor import MIN_SCORE, TailoredFile
 
 # Up to this many new jobs in one cycle go out one message each; more than that are grouped.
@@ -20,7 +20,8 @@ def batches(jobs: Sequence[Job]) -> list[list[Job]]:
 
 
 def _details(job: Job) -> str:
-    return " · ".join(part for part in (job.company, job.location) if part)
+    # The source last: it tells where to apply.
+    return " · ".join(part for part in (job.company, job.location, SOURCE_LABELS[job.source]) if part)
 
 
 def _score_lines(assessment: Assessment | None) -> list[str]:
@@ -113,11 +114,10 @@ def job_message(
     elif len(jobs) == 1:
         job = jobs[0]
         score = f" ({scores[job.key].score}/100)" if job.key in scores else ""
-        subject = f"Nova vaga Easy Apply{score}: {job.title}" + (f" · {job.company}" if job.company else "")
-        heading = "Nova vaga (Easy Apply)"
+        subject = f"Nova vaga{score}: {job.title}" + (f" · {job.company}" if job.company else "")
+        heading = "Nova vaga"
     else:
-        subject = f"{len(jobs)} novas vagas Easy Apply"
-        heading = f"{len(jobs)} novas vagas (Easy Apply)"
+        subject = heading = f"{len(jobs)} novas vagas"
 
     text_items = [
         "\n".join(
@@ -154,17 +154,18 @@ def job_message(
     )
 
 
-def source_down_message(since: datetime) -> Message:
+def source_down_message(since: datetime, source: Source) -> Message:
     when = since.strftime("%d/%m %H:%M UTC")
+    label = SOURCE_LABELS[source]
     text = (
-        f"A busca de vagas está falhando desde {when}. "
-        "Nenhuma vaga nova será avisada até ela voltar; veja os logs do worker."
+        f"A busca de vagas do {label} está falhando desde {when}. "
+        f"Nenhuma vaga nova do {label} será avisada até ela voltar; veja os logs do worker."
     )
     return Message(
-        subject="Alerta: busca de vagas falhando",
+        subject=f"Alerta: busca de vagas do {label} falhando",
         text=f"*Alerta do linkedin-api*\n\n{text}",
         html=f"<h2>Alerta do linkedin-api</h2><p>{escape(text)}</p>",
         telegram_blocks=("<b>Alerta do linkedin-api</b>", _tg(text)),
-        idempotency_key=f"source-down-{int(since.timestamp())}",
+        idempotency_key=f"source-down-{source}-{int(since.timestamp())}",
         keys=(),
     )

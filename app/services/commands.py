@@ -52,7 +52,7 @@ def _utc_now() -> datetime:
 
 def _digest_answer(result: DigestResult | None) -> str:
     if result is None:
-        return "Não consegui rodar o resumo agora (LinkedIn ou os canais fora do ar). Tente mais tarde."
+        return "Não consegui rodar o resumo agora (busca de vagas ou canais fora do ar). Tente mais tarde."
     if result.sent:
         return f"Resumo pronto: {result.sent} vaga(s) com nota {MIN_SCORE}+ enviada(s)."
     if not result.checked:
@@ -63,11 +63,11 @@ def _digest_answer(result: DigestResult | None) -> str:
 
 def _list_answer(result: ListResult | None) -> str:
     if result is None:
-        return "Não consegui listar as vagas agora (LinkedIn ou os canais fora do ar). Tente mais tarde."
+        return "Não consegui listar as vagas agora (busca de vagas ou canais fora do ar). Tente mais tarde."
     if not result.shown:
         return "Nenhuma vaga encontrada nas buscas."
     unscored = result.shown - result.scored
-    waiting = f", {unscored} sem nota (IA ou LinkedIn fora)" if unscored else ""
+    waiting = f", {unscored} sem nota (IA ou busca de vagas fora)" if unscored else ""
     return f"Lista pronta: {result.shown} vaga(s){waiting}."
 
 

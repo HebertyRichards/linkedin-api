@@ -6,7 +6,7 @@ from pydantic import SecretStr
 from app.channels.base import Attachment, Message
 from app.config.settings import Channel, Settings
 from app.errors import SourceUnavailableError
-from app.schemas.job import Assessment, Job, JobDetails, Workplace
+from app.schemas.job import Assessment, Job, JobDetails, Source, Workplace
 from app.schemas.resume import TailoredResume
 from app.services.dispatcher import Dispatcher
 from app.services.llm import ChatClient
@@ -135,7 +135,12 @@ class FakeSource:
         self,
         results: list[list[Job] | SourceUnavailableError],
         details: JobDetails | SourceUnavailableError = DETAILS,
+        *,
+        name: Source = "linkedin",
+        min_interval: timedelta | None = None,
     ) -> None:
+        self.name: Source = name
+        self.min_interval = min_interval
         self._results = results
         self.details = details
         self.calls = 0
@@ -220,18 +225,19 @@ class Clock:
 
 
 def make_watcher(
-    source: FakeSource,
+    source: FakeSource | None,
     channels: list[FakeNotifier],
     *,
+    sources: list[FakeSource] | None = None,
     store: SeenStore | None = None,
     clock: Clock | None = None,
     searches: list[str] | None = None,
     assessor: FakeAssessor | None = None,
     tailor: FakeTailor | None = None,
 ) -> Watcher:
-    """Without an assessor every job scores 80: it goes out."""
+    """Without an assessor every job scores 80: it goes out. Several sources: `None` and `sources=[...]`."""
     return Watcher(
-        source=source,
+        sources=[source] if source is not None else sources or [],
         dispatcher=Dispatcher(channels),
         store=store or SeenStore(None),
         searches=searches or ["python"],

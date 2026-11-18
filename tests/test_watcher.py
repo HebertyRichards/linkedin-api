@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
-from app.schemas.job import JobDetails
+from app.schemas.job import Job, JobDetails
 from app.services.dispatcher import Dispatcher
 from app.services.messages import RESUME_DOWN, job_message
-from app.services.watcher import excluded_terms, is_excluded
 from app.state.seen_store import SeenStore
+from app.utils.search_query import excluded_terms, is_excluded
 from tests.helpers import (
     DETAILS,
     Clock,
@@ -216,6 +216,23 @@ async def test_digest_runs_every_six_hours_and_sends_only_what_is_still_unseen()
     assert [message.keys for message in email.sent] == [(job(1).key,), (job(2).key,)]
 
 
+async def test_digest_stays_due_while_one_source_is_down() -> None:
+    # The other source answering must not push LinkedIn's catch-up 6 hours away.
+    email = FakeNotifier("email")
+    clock = Clock()
+    linkedin = FakeSource([SourceUnavailableError("blocked (429)", blocked=True), [job(1)]])
+    gupy = FakeSource([[gupy_job(2)]], name="gupy")
+    watcher = make_watcher(None, [email], clock=clock, sources=[linkedin, gupy])
+
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+    assert [message.keys for message in email.sent] == [(gupy_job(2).key,)]
+
+    await watcher.digest_if_due()  # LinkedIn is back on the next loop: due still, so it runs again
+    assert [message.keys for message in email.sent] == [(gupy_job(2).key,), (job(1).key,)]
+    assert watcher.next_digest_at == clock.now + timedelta(hours=6)
+
+
 async def test_digest_stays_due_when_delivery_fails() -> None:
     email = FakeNotifier("email", fail_with=ChannelUnavailableError("circuit open"))
     clock = Clock()
@@ -412,7 +429,7 @@ async def test_only_jobs_from_50_up_go_out_best_first_and_on_site_ones_never() -
 
     # Up to 3 jobs go out one message each, the best score first.
     assert [message.keys for message in email.sent] == [(job(3).key,), (job(1).key,)]
-    assert email.sent[0].subject.startswith("Nova vaga Easy Apply (82/100)")
+    assert email.sent[0].subject.startswith("Nova vaga (82/100)")
     assert "Nota 82/100: Stack parecida." in email.sent[0].text
     assert "Falta: Kubernetes" in email.sent[0].text
     assert store.is_seen(job(2).key) and store.is_seen(job(4).key)
@@ -564,3 +581,99 @@ async def test_a_closed_job_is_dropped_before_the_ai_and_never_goes_out() -> Non
     assert email.sent == []
     assert store.is_seen(job(1).key)
     assert source.detail_calls == [job(1).key]  # marked as seen: its page is not read again
+
+
+def gupy_job(n: int) -> Job:
+    """A Gupy job with the same id as job(n): only the source tells them apart."""
+    return Job(
+        id=job(n).id, title=f"Python Developer {n}", company="Acme", location="Remoto", source="gupy", site="acme"
+    )
+
+
+async def test_every_source_is_read_with_its_own_baseline_per_search() -> None:
+    email = FakeNotifier("email")
+    store = SeenStore(None)
+    linkedin = FakeSource([[job(1)], [job(1)], [job(1), job(3)]])
+    gupy = FakeSource([[gupy_job(1)], [gupy_job(2)], [gupy_job(1), gupy_job(3)]], name="gupy")
+    watcher = make_watcher(None, [email], store=store, sources=[linkedin, gupy], searches=["python", "node"])
+
+    await watcher.cycle()
+    assert email.sent == []
+    assert all(
+        store.has_baseline(f"{name}|{search}|brazil") for name in ("linkedin", "gupy") for search in ("python", "node")
+    )
+
+    await watcher.cycle()
+    assert (linkedin.calls, gupy.calls) == (4, 4)
+    assert [message.keys for message in email.sent] == [(job(3).key,), (gupy_job(3).key,)]
+    assert job(3).key != gupy_job(3).key
+
+
+async def test_a_source_with_a_min_interval_is_skipped_by_the_cycle_only() -> None:
+    clock = Clock()
+    source = FakeSource([[]], name="gupy", min_interval=timedelta(minutes=30))
+    watcher = make_watcher(source, [FakeNotifier("email")], clock=clock)
+
+    await watcher.cycle()
+    clock.advance(minutes=15)
+    await watcher.cycle()
+    assert source.windows == [3600]
+
+    await watcher.digest_now()
+    await watcher.list_now()
+    assert source.windows == [3600, None, None]
+
+    clock.advance(minutes=15)  # 30 min after the cycle last read it
+    await watcher.cycle()
+    assert source.windows == [3600, None, None, 3600]
+
+    clock.advance(minutes=24)  # a loop sleep 20% short still finds it due
+    await watcher.cycle()
+    assert source.windows == [3600, None, None, 3600, 3600]
+
+
+async def test_one_source_down_alerts_once_naming_it_and_recovers(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    email = FakeNotifier("email")
+    clock = Clock()
+    blocked = SourceUnavailableError("blocked (429)", blocked=True)
+    linkedin = FakeSource([blocked] * 15 + [[]])
+    gupy = FakeSource([[]], name="gupy")
+    watcher = make_watcher(None, [email], clock=clock, sources=[linkedin, gupy])
+
+    for _ in range(16):  # 75 minutes failing, then it answers
+        await watcher.cycle()
+        clock.advance(minutes=5)
+
+    [alert] = email.sent
+    assert alert.keys == () and alert.subject == "Alerta: busca de vagas do LinkedIn falhando"
+    assert "Gupy" not in alert.text
+    assert "Job source linkedin recovered" in caplog.text
+    assert "Job source gupy recovered" not in caplog.text
+
+
+async def test_a_blocked_linkedin_job_page_does_not_hold_the_other_source() -> None:
+    email = FakeNotifier("email")
+    linkedin = FakeSource([[], [job(1), job(2)]], details=SourceUnavailableError("blocked (429)", blocked=True))
+    gupy = FakeSource([[], [gupy_job(1), gupy_job(2)]], name="gupy")
+    watcher = make_watcher(None, [email], sources=[linkedin, gupy])
+
+    await watcher.cycle()
+    await watcher.cycle()
+
+    assert linkedin.detail_calls == [job(1).key]
+    assert gupy.detail_calls == [gupy_job(1).key, gupy_job(2).key]
+    assert [message.keys for message in email.sent] == [(gupy_job(1).key,), (gupy_job(2).key,)]
+
+
+def test_messages_name_the_source_and_not_easy_apply() -> None:
+    one = job_message([job(1)], {job(1).key: assessment(82)})
+    many = job_message([job(1), gupy_job(2)])
+
+    assert one.subject == "Nova vaga (82/100): Python Developer 1 · Acme"
+    assert many.subject == "2 novas vagas"
+    for message in (one, many):
+        assert "Easy Apply" not in message.subject + message.text + message.html
+    assert "Acme · São Paulo, Brazil · LinkedIn" in many.text
+    assert "Acme · Remoto · Gupy" in many.text
+    assert "Acme · Remoto · Gupy" in many.html and "Acme · Remoto · Gupy" in many.telegram_blocks[2]

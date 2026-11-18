@@ -21,6 +21,8 @@ from app.services.dispatcher import Dispatcher
 from app.services.llm import build_chats
 from app.services.tailor import ResumeTailor
 from app.services.watcher import DIGEST_EVERY, INTERVAL_JITTER, Watcher
+from app.sources.base import JobSource
+from app.sources.gupy_portal import GupyPortalSource
 from app.sources.linkedin_guest import LinkedInGuestSource
 from app.state.seen_store import SeenStore
 from app.utils.watchdog import Watchdog
@@ -51,8 +53,9 @@ async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
     async with httpx.AsyncClient() as client:
         assessor, tailor = _ai_services(client, settings, profile)
         watchdog = Watchdog(stall_after(settings.poll_interval_seconds))
+        sources: list[JobSource] = [LinkedInGuestSource(client), GupyPortalSource(client)]
         watcher = Watcher(
-            source=LinkedInGuestSource(client),
+            sources=sources,
             dispatcher=Dispatcher(build_channels(settings, client), copy="email"),
             store=store,
             searches=settings.searches,
@@ -63,8 +66,9 @@ async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
             heartbeat=watchdog.beat,
         )
         logger.info(
-            "Watching %d search(es) in '%s' every ~%ds, any date every %dh; channels: %s; state: %s; score: %s",
+            "Watching %d search(es) on %s in '%s' every ~%ds, any date every %dh; channels: %s; state: %s; score: %s",
             len(settings.searches),
+            ", ".join(source.name for source in sources),
             settings.job_location,
             settings.poll_interval_seconds,
             DIGEST_EVERY // timedelta(hours=1),

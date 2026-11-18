@@ -32,7 +32,8 @@ async def test_reads_every_page_of_the_window_until_a_short_page() -> None:
     assert len(jobs) == 13
     assert [r.url.params["start"] for r in requests] == ["0", "10"]
     params = requests[0].url.params
-    assert (params["f_AL"], params["f_TPR"], params["location"]) == ("true", "r3600", "Brazil")
+    assert (params["f_TPR"], params["location"]) == ("r3600", "Brazil")
+    assert "f_AL" not in params  # every job, Easy Apply or not
     assert "cookie" not in requests[0].headers
 
 
@@ -47,7 +48,7 @@ async def test_no_window_searches_jobs_of_any_date() -> None:
         await LinkedInGuestSource(client, page_delay=0).fetch_recent("python", "Brazil", window_seconds=None)
 
     assert "f_TPR" not in requests[0].url.params
-    assert requests[0].url.params["f_AL"] == "true"
+    assert "f_AL" not in requests[0].url.params
 
 
 async def test_block_answer_opens_the_circuit() -> None:

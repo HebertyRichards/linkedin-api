@@ -1,6 +1,11 @@
-from typing import Literal
+import base64
+import json
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+Source = Literal["linkedin", "gupy"]
+SOURCE_LABELS: dict[Source, str] = {"linkedin": "LinkedIn", "gupy": "Gupy"}
 
 MAX_TEXT = 200
 # The description is cut so one assessment fits the LLM free-tier token budget (~1,500 tokens).
@@ -19,6 +24,8 @@ class Job(BaseModel):
     title: str = Field(min_length=1, max_length=MAX_TEXT)
     company: str = Field(default="", max_length=MAX_TEXT)
     location: str = Field(default="", max_length=MAX_TEXT)
+    source: Source = "linkedin"
+    site: str = Field(default="", pattern=r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)?$")
 
     @field_validator("title", "company", "location", mode="before")
     @classmethod
@@ -26,13 +33,23 @@ class Job(BaseModel):
         # Collapses newlines and runs of spaces (they would break an email subject) and cuts long text.
         return " ".join(v.split())[:MAX_TEXT] if isinstance(v, str) else v
 
+    @model_validator(mode="after")
+    def _site_only_for_gupy(self) -> Self:
+        if (self.source == "gupy") != bool(self.site):
+            raise ValueError("site is required for a Gupy job, and only for it")
+        return self
+
     @property
     def key(self) -> str:
-        return f"linkedin:{self.id}"
+        return f"{self.source}:{self.id}"
 
     @property
     def url(self) -> str:
         # Built from the id, never copied from the page: a tampered link cannot reach the message.
+        if self.source == "gupy":
+            # Gupy's token is this JSON in URL-safe base64, as seen on its job links.
+            payload = json.dumps({"jobId": int(self.id), "source": "gupy_portal"}, separators=(",", ":"))
+            return f"https://{self.site}.gupy.io/job/{base64.urlsafe_b64encode(payload.encode()).decode()}"
         return f"https://www.linkedin.com/jobs/view/{self.id}/"
 
 

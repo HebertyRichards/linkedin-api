@@ -81,7 +81,7 @@ async def test_vagas_lists_and_has_its_own_cooldown() -> None:
 
     await commands.handle("/resumo")
     await commands.handle("/vagas@MeuBot")  # right after /resumo: still runs
-    assert inbox.replies[-1] == "Lista pronta: 20 vaga(s), 2 sem nota (IA ou LinkedIn fora)."
+    assert inbox.replies[-1] == "Lista pronta: 20 vaga(s), 2 sem nota (IA ou busca de vagas fora)."
     clock.advance(minutes=5)
     await commands.handle("/vagas")
 

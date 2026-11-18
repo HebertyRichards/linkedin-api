@@ -6,7 +6,7 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.schemas.job import Assessment, Job, JobDetails
+from app.schemas.job import SOURCE_LABELS, Assessment, Job, JobDetails
 from app.schemas.resume import Resume
 from app.services.llm import ChatModel
 
@@ -103,7 +103,7 @@ def job_text(job: Job, details: JobDetails) -> str:
             f"Título: {job.title}",
             f"Empresa: {job.company or '-'}",
             f"Local: {job.location or '-'}",
-            f"Nível (LinkedIn): {details.seniority or '-'}",
+            f"Nível ({SOURCE_LABELS[job.source]}): {details.seniority or '-'}",
             f"Tipo de contrato: {details.employment_type or '-'}",
             "Descrição:",
             details.description,
