@@ -110,7 +110,6 @@ class Watcher:
         self._job_page_spacing = job_page_spacing
         self._clock = clock
         self._page_failures: dict[str, int] = {}
-        self._last_read: dict[Source, datetime] = {}  # when the cycle last read each source
         self._failing_since: dict[Source, datetime] = {}
         self._down_alert_sent: set[Source] = set()
         self._lock = asyncio.Lock()
@@ -138,11 +137,7 @@ class Watcher:
         new: dict[str, Job] = {}
         state_changed = False
         read = answered_count = 0
-        for source in self._sources.values():
-            if not self._due(source, now):
-                continue
-            self._last_read[source.name] = now
-            answered = await self._read_searches(source, CYCLE_WINDOW_SECONDS)
+        for source, answered in await self._read_sources(CYCLE_WINDOW_SECONDS):
             read += len(self._searches)
             answered_count += len(answered)
             await self._track_source_health(source.name, now, all_failed=not answered)
@@ -177,14 +172,6 @@ class Watcher:
             read,
             len(new),
         )
-
-    def _due(self, source: JobSource, now: datetime) -> bool:
-        """Whether the cycle reads `source` now: its min_interval passed since the cycle last read it."""
-        last = self._last_read.get(source.name)
-        if source.min_interval is None or last is None:
-            return True
-        # The loop sleep moves ±20%: a source due every 30 min with a 15 min loop is not pushed to the third loop.
-        return now - last >= source.min_interval * (1 - INTERVAL_JITTER)
 
     @property
     def next_digest_at(self) -> datetime:
@@ -284,15 +271,21 @@ class Watcher:
         return DigestResult(len(batch.jobs), checked, pending, complete)
 
     async def _read_every_source(self, window_seconds: int | None) -> tuple[list[list[Job]], bool]:
-        """The jobs of each search that answered, from every source whatever its min_interval (digest, /vagas),
-        and whether every source answered at least one search."""
+        """The jobs of each search that answered, from every source (digest, /vagas), and whether every source
+        answered at least one search."""
         answered: list[list[Job]] = []
         complete = True
-        for source in self._sources.values():
-            searches = await self._read_searches(source, window_seconds)
+        for _, searches in await self._read_sources(window_seconds):
             complete = complete and bool(searches)
             answered += [jobs for _, jobs in searches]
         return answered, complete
+
+    async def _read_sources(self, window_seconds: int | None) -> list[tuple[JobSource, list[tuple[str, list[Job]]]]]:
+        """Every source at the same time: each waits on its own site, so a slow one does not hold the others.
+        Within a source the searches stay one after another, spaced. Results come in the order of the sources."""
+        sources = list(self._sources.values())
+        reads = await asyncio.gather(*(self._read_searches(source, window_seconds) for source in sources))
+        return list(zip(sources, reads, strict=True))
 
     async def _read_searches(self, source: JobSource, window_seconds: int | None) -> list[tuple[str, list[Job]]]:
         """Each search that `source` answered, with its jobs. A failed search is logged and left out.

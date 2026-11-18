@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -5,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.errors import ChannelUnavailableError, SourceUnavailableError
-from app.schemas.job import Job, JobDetails
+from app.schemas.job import Job, JobDetails, Source
 from app.services.dispatcher import Dispatcher
 from app.services.messages import RESUME_DOWN, job_message
 from app.state.seen_store import SeenStore
@@ -609,27 +610,39 @@ async def test_every_source_is_read_with_its_own_baseline_per_search() -> None:
     assert job(3).key != gupy_job(3).key
 
 
-async def test_a_source_with_a_min_interval_is_skipped_by_the_cycle_only() -> None:
-    clock = Clock()
-    source = FakeSource([[]], name="gupy", min_interval=timedelta(minutes=30))
-    watcher = make_watcher(source, [FakeNotifier("email")], clock=clock)
+class _Asked(FakeSource):
+    """Sets `asked` on its first search."""
 
-    await watcher.cycle()
-    clock.advance(minutes=15)
-    await watcher.cycle()
-    assert source.windows == [3600]
+    def __init__(self, name: Source) -> None:
+        super().__init__([[]], name=name)
+        self.asked = asyncio.Event()
 
-    await watcher.digest_now()
-    await watcher.list_now()
-    assert source.windows == [3600, None, None]
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
+        self.asked.set()
+        return await super().fetch_recent(keywords, location, window_seconds=window_seconds)
 
-    clock.advance(minutes=15)  # 30 min after the cycle last read it
-    await watcher.cycle()
-    assert source.windows == [3600, None, None, 3600]
 
-    clock.advance(minutes=24)  # a loop sleep 20% short still finds it due
-    await watcher.cycle()
-    assert source.windows == [3600, None, None, 3600, 3600]
+class _WaitsFor(FakeSource):
+    """Answers only after `other` was asked: read one after the other, the first source would wait forever."""
+
+    def __init__(self, other: _Asked) -> None:
+        super().__init__([[]], name="gupy")
+        self._other = other
+
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
+        await self._other.asked.wait()
+        return await super().fetch_recent(keywords, location, window_seconds=window_seconds)
+
+
+@pytest.mark.parametrize("read", ["cycle", "digest_now", "list_now"])
+async def test_every_source_is_read_at_the_same_time(read: str) -> None:
+    linkedin = _Asked("linkedin")
+    first = _WaitsFor(linkedin)  # listed first: a sequential read never gets to LinkedIn
+    watcher = make_watcher(None, [FakeNotifier("email")], sources=[first, linkedin])
+
+    await asyncio.wait_for(getattr(watcher, read)(), timeout=1)
+
+    assert (first.calls, linkedin.calls) == (1, 1)
 
 
 async def test_one_source_down_alerts_once_naming_it_and_recovers(caplog: pytest.LogCaptureFixture) -> None:

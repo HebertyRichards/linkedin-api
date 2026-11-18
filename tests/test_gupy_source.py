@@ -6,7 +6,8 @@ import pytest
 
 from app.errors import SourceUnavailableError
 from app.schemas.job import Job
-from app.sources.gupy_portal import GupyPortalSource, search_terms
+from app.sources.gupy_portal import GupyPortalSource
+from app.utils.search_query import search_terms
 
 NOW = datetime(2026, 11, 16, 12, 0, tzinfo=UTC)
 GRUPOMATER_URL = "https://grupomater.gupy.io/job/eyJqb2JJZCI6MTI4NjI1NDAsInNvdXJjZSI6Imd1cHlfcG9ydGFsIn0="

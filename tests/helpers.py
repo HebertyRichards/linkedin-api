@@ -137,10 +137,8 @@ class FakeSource:
         details: JobDetails | SourceUnavailableError = DETAILS,
         *,
         name: Source = "linkedin",
-        min_interval: timedelta | None = None,
     ) -> None:
         self.name: Source = name
-        self.min_interval = min_interval
         self._results = results
         self.details = details
         self.calls = 0

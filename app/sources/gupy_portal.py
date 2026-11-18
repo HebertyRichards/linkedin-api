@@ -20,9 +20,10 @@ from pydantic.alias_generators import to_camel
 
 from app.errors import SourceUnavailableError
 from app.schemas.job import Job, JobDetails, Source
+from app.sources.base import DetailsCache
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.retry import parse_retry_after
-from app.utils.search_query import NOT_TERM
+from app.utils.search_query import search_terms
 
 logger = logging.getLogger(__name__)
 
@@ -32,24 +33,14 @@ _BLOCKED_STATUS = {403, 429}
 _HEADERS = {"User-Agent": "linkedin-api-job-alert/0.1", "Accept": "text/html"}
 _NEXT_DATA = re.compile(r'<script[^>]*\bid="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 _JOB_LIST_PATH = ("props", "pageProps", "initialJobList", "data")
-_OR = re.compile(r"\bOR\b")
 # Only a career page of a company on Gupy: one label before gupy.io, nothing else in the host.
 _CAREER_HOST = re.compile(r"([a-z0-9-]+)\.gupy\.io")
 _WORKPLACES = {"remote": "Remoto", "hybrid": "Híbrido", "on-site": "Presencial"}
 _EMPLOYMENT = {"vacancy_type_effective": "Efetivo (CLT)", "vacancy_legal_entity": "Pessoa jurídica (PJ)"}
-_MAX_CACHED_DETAILS = 500
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def search_terms(keywords: str) -> list[str]:
-    """The plain terms of a search written in LinkedIn syntax: Gupy does not understand OR, NOT or quotes,
-    so each OR alternative becomes its own search."""
-    text = NOT_TERM.sub(" ", keywords).replace("(", " ").replace(")", " ")
-    terms = (" ".join(part.replace('"', " ").split()) for part in _OR.split(text))
-    return list(dict.fromkeys(term for term in terms if term))
 
 
 class _Item(BaseModel):
@@ -124,8 +115,6 @@ def parse_job_list(page: str) -> list[object]:
 
 class GupyPortalSource:
     name: Source = "gupy"
-    # Unofficial endpoint: the user wants it read every 30 minutes to keep the load low.
-    min_interval: timedelta | None = timedelta(minutes=30)
 
     def __init__(
         self, client: httpx.AsyncClient, *, term_delay: float = 2.0, clock: Callable[[], datetime] = _utc_now
@@ -136,13 +125,12 @@ class GupyPortalSource:
         self._breaker = CircuitBreaker(
             failure_threshold=3, recovery_timeout=300.0, max_recovery_timeout=3600.0, name="gupy"
         )
-        # The search JSON already has the description, so details are kept here instead of a second request.
-        self._details: dict[str, JobDetails] = {}
+        self._details = DetailsCache()
 
     async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
         # `location` is not used: Gupy lists jobs in Brazil only.
-        # Only page 1 (the newest 12) is read: results come newest first and the search runs every 30 minutes,
-        # so a term with more than 12 new jobs in that time is not expected.
+        # Only page 1 (the newest 12) is read: results come newest first and the cycle runs every 30 minutes
+        # (POLL_INTERVAL_SECONDS), so a term with more than 12 new jobs in that time is not expected.
         if not self._breaker.allow():
             raise SourceUnavailableError("circuit open", blocked=True)
         now = self._clock()
@@ -165,7 +153,7 @@ class GupyPortalSource:
                 if (since is not None and item.published_date < since) or job.key in jobs:
                     continue
                 jobs[job.key] = job
-                self._keep_details(job.key, item.details(now))
+                self._details.keep(job, item.details(now))
             # A renamed field would otherwise pass for "no new jobs", or for jobs with no text, forever.
             if raw_jobs and not recognized:
                 self._breaker.record_failure()
@@ -177,18 +165,7 @@ class GupyPortalSource:
         return list(jobs.values())
 
     async def fetch_details(self, job: Job) -> JobDetails:
-        """The details read along with the search. Never makes a request: a job not seen by a recent search
-        raises."""
-        details = self._details.get(job.key)
-        if details is None:
-            raise SourceUnavailableError("no cached details for this job")
-        return details
-
-    def _keep_details(self, key: str, details: JobDetails) -> None:
-        self._details.pop(key, None)
-        self._details[key] = details
-        if len(self._details) > _MAX_CACHED_DETAILS:
-            del self._details[next(iter(self._details))]
+        return self._details.get(job)
 
     async def _fetch_term(self, term: str) -> list[object]:
         url = SEARCH_URL.format(term=quote(term, safe=""))

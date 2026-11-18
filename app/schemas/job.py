@@ -1,11 +1,27 @@
 import base64
 import json
+import re
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Source = Literal["linkedin", "gupy"]
-SOURCE_LABELS: dict[Source, str] = {"linkedin": "LinkedIn", "gupy": "Gupy"}
+Source = Literal["linkedin", "gupy", "remotar", "himalayas", "workable"]
+SOURCE_LABELS: dict[Source, str] = {
+    "linkedin": "LinkedIn",
+    "gupy": "Gupy",
+    "remotar": "Remotar",
+    "himalayas": "Himalayas",
+    "workable": "Workable",
+}
+_DIGITS = re.compile(r"\d{1,20}")
+# The id is all the link is built from, so each source's id has the exact shape of its link's variable part.
+_ID_SHAPES: dict[Source, re.Pattern[str]] = {
+    "linkedin": _DIGITS,
+    "gupy": _DIGITS,
+    "remotar": _DIGITS,
+    "himalayas": re.compile(r"[a-z0-9-]{1,100}/[a-z0-9-]{1,100}"),  # company slug / job slug
+    "workable": re.compile(r"[A-Za-z0-9]{6,40}"),  # the short code of jobs.workable.com/view/<code>
+}
 
 MAX_TEXT = 200
 # The description is cut so one assessment fits the LLM free-tier token budget (~1,500 tokens).
@@ -20,7 +36,7 @@ class Job(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    id: str = Field(pattern=r"^\d{1,20}$")
+    id: str = Field(min_length=1, max_length=201)
     title: str = Field(min_length=1, max_length=MAX_TEXT)
     company: str = Field(default="", max_length=MAX_TEXT)
     location: str = Field(default="", max_length=MAX_TEXT)
@@ -34,7 +50,9 @@ class Job(BaseModel):
         return " ".join(v.split())[:MAX_TEXT] if isinstance(v, str) else v
 
     @model_validator(mode="after")
-    def _site_only_for_gupy(self) -> Self:
+    def _id_and_site_fit_the_source(self) -> Self:
+        if not _ID_SHAPES[self.source].fullmatch(self.id):
+            raise ValueError(f"id does not fit a {self.source} job")
         if (self.source == "gupy") != bool(self.site):
             raise ValueError("site is required for a Gupy job, and only for it")
         return self
@@ -50,6 +68,13 @@ class Job(BaseModel):
             # Gupy's token is this JSON in URL-safe base64, as seen on its job links.
             payload = json.dumps({"jobId": int(self.id), "source": "gupy_portal"}, separators=(",", ":"))
             return f"https://{self.site}.gupy.io/job/{base64.urlsafe_b64encode(payload.encode()).decode()}"
+        if self.source == "remotar":
+            return f"https://remotar.com.br/job/{self.id}"
+        if self.source == "himalayas":
+            company, slug = self.id.split("/")
+            return f"https://himalayas.app/companies/{company}/jobs/{slug}"
+        if self.source == "workable":
+            return f"https://jobs.workable.com/view/{self.id}"
         return f"https://www.linkedin.com/jobs/view/{self.id}/"
 
 

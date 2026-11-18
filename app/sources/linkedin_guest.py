@@ -6,7 +6,6 @@ notice. Requests carry no login and no cookies on purpose. See SCOPE.md, section
 
 import asyncio
 import logging
-from datetime import timedelta
 from html.parser import HTMLParser
 
 import httpx
@@ -172,7 +171,6 @@ def parse_cards(html: str) -> tuple[list[Job], int]:
 
 class LinkedInGuestSource:
     name: Source = "linkedin"
-    min_interval: timedelta | None = None
 
     def __init__(self, client: httpx.AsyncClient, *, page_delay: float = 1.5) -> None:
         self._client = client
