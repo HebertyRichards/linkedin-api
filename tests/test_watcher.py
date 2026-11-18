@@ -679,6 +679,19 @@ async def test_a_blocked_linkedin_job_page_does_not_hold_the_other_source() -> N
     assert [message.keys for message in email.sent] == [(gupy_job(1).key,), (gupy_job(2).key,)]
 
 
+@pytest.mark.parametrize("read", ["digest_now", "list_now"])
+async def test_a_source_with_many_jobs_does_not_fill_the_digest_and_vagas_alone(read: str) -> None:
+    email = FakeNotifier("email")
+    linkedin = FakeSource([[job(n) for n in range(25)]])
+    gupy = FakeSource([[gupy_job(n) for n in range(3)]], name="gupy")
+    watcher = make_watcher(None, [email], sources=[linkedin, gupy])
+
+    await getattr(watcher, read)()
+
+    [message] = email.sent
+    assert {gupy_job(n).key for n in range(3)} <= set(message.keys)
+
+
 def test_messages_name_the_source_and_not_easy_apply() -> None:
     one = job_message([job(1)], {job(1).key: assessment(82)})
     many = job_message([job(1), gupy_job(2)])

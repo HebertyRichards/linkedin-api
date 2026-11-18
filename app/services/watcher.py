@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import itertools
 import logging
 import random
 from collections.abc import Callable, Sequence
@@ -38,6 +39,17 @@ LIST_SIZE = 20
 _MAX_PAGE_FAILURES = 3
 # Bound for the failure counts; past it they are forgotten (worst case a broken page gets 3 more tries).
 _FAILURES_LIMIT = 1000
+
+
+def _interleaved(answered: list[list[Job]]) -> list[Job]:
+    """The jobs of every search, one of each search in turn, without repeats: read one search after the other,
+    the first source (LinkedIn, up to 30 jobs a search) would fill /vagas and the digest's first rounds alone."""
+    jobs: dict[str, Job] = {}
+    for row in itertools.zip_longest(*answered):
+        for job in row:
+            if job is not None:
+                jobs.setdefault(job.key, job)
+    return list(jobs.values())
 
 
 @dataclass
@@ -202,15 +214,11 @@ class Watcher:
             answered, _ = await self._read_every_source(None)
             if not answered:
                 return None
-            pool: dict[str, Job] = {}
-            for jobs in answered:
-                for job in jobs:
-                    pool.setdefault(job.key, job)
             listed: list[Job] = []
             scores: dict[str, Assessment] = {}
             closed: list[str] = []
             pages = _Pages()
-            for job in pool.values():
+            for job in _interleaved(answered):
                 if len(listed) == LIST_SIZE:
                     break
                 self._heartbeat()  # 20 job pages and scores can take long: the watchdog must not see a stall
@@ -244,12 +252,8 @@ class Watcher:
         answered, complete = await self._read_every_source(None)
         if not answered:
             return None
-        unseen: dict[str, Job] = {}
-        for jobs in answered:
-            for job in jobs:
-                if not self._store.is_seen(job.key):
-                    unseen.setdefault(job.key, job)
-        queue = list(unseen.values())[: MAX_DIGEST_ROUNDS * MAX_PER_MESSAGE]
+        unseen = [job for job in _interleaved(answered) if not self._store.is_seen(job.key)]
+        queue = unseen[: MAX_DIGEST_ROUNDS * MAX_PER_MESSAGE]
         batch = _Batch([])
         checked = pending = 0
         for start in range(0, len(queue), MAX_PER_MESSAGE):

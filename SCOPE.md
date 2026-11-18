@@ -351,6 +351,13 @@ Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
   fica de fora (e não é aberta de novo no próximo `/vagas`); com a
   IA ou o LinkedIn fora, a vaga aparece sem nota. Até 20 notas e 20 páginas de vaga; uma nota já dada desde o
   último boot não gasta cota. Um `/vagas` a cada 30 min, com relógio próprio (não bloqueia o `/resumo`).
+- **`/vagas` x `/resumo` (2026-11-18):** os dois leem vagas de qualquer data em todas as fontes, sem as que
+  caem num termo NOT da busca e sem as encerradas.
+  - `/vagas`: até **20** vagas, vistas ou não, **qualquer nota** (inclusive presencial e abaixo de 50), sem
+    currículo. Não marca nada como visto, então repetir o comando mostra as mesmas vagas.
+  - `/resumo`: dá nota a até **50** vagas ainda não vistas (5 rodadas de 10) e manda só as da primeira rodada
+    com alguma **50+ e não presencial**, no máximo 10 numa mensagem, cada uma com o currículo. As que
+    receberam nota viram vistas e não voltam no próximo resumo.
 - **Leitura por long polling (`getUpdates`),** sem webhook nem porta aberta. Só conta mensagem do
   `TELEGRAM_CHAT_ID`; de outro chat é ignorada sem resposta. Num grupo, qualquer membro pode mandar comando.
 - **Deploy não roda comando antigo:** no boot o robô pula o que chegou com ele desligado.
@@ -402,6 +409,9 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
 - **Em paralelo:** o ciclo, o resumo e o `/vagas` leem as fontes ao mesmo tempo (`asyncio.gather`, uma
   tarefa por fonte; é um processo só, e a espera de rede de uma fonte não segura as outras). Dentro de uma
   fonte, as buscas seguem uma por vez e espaçadas, para não pesar no site.
+- **Fila intercalada:** o resumo e o `/vagas` montam a fila com uma vaga de cada busca de cada fonte por vez
+  (1ª do LinkedIn, 1ª da Gupy, ..., depois as 2ªs). Em fila corrida, o LinkedIn (até 30 vagas por busca)
+  enchia sozinho as 20 do `/vagas` e as primeiras rodadas do resumo.
 - **Limites aceitos:** a mesma vaga publicada em duas fontes chega duas vezes (o autor recusou deduplicar por
   título e empresa); no Remotar, as vagas que vêm da Gupy são puladas. A página da vaga no Himalayas tem
   verificação da Cloudflare (abre no navegador, não em script). O Workable ordena por relevância, então só
@@ -773,6 +783,7 @@ Os comentários ficam em inglês e enxutos.
 - **Fontes (D8):**
   - [ ] Cada linha de vaga termina com a fonte (LinkedIn, Gupy, Remotar, Himalayas ou Workable), e o link abre a vaga certa.
   - [ ] O ciclo, o resumo e o `/vagas` leem todas as fontes toda vez, ao mesmo tempo (D9).
+  - [ ] Com o LinkedIn cheio de vagas, o `/vagas` e o resumo ainda trazem as das outras fontes.
   - [ ] A Gupy falhando por 1 hora gera um aviso só dela, e o LinkedIn segue avisando.
 
 ## 10. Fora do escopo do v1
