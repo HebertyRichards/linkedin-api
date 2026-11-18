@@ -247,6 +247,12 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
   "Mid-Senior level" do LinkedIn não levam o limite de 40 de vaga sênior, a pedido do autor. Medido antes
   da regra: a mesma vaga "pleno avançado a sênior" tirou 35, 65 e 70 (às vezes a IA aplicava o limite, às
   vezes não), atravessando o corte de 50.
+- **Inglês obrigatório acima do currículo limita a nota a 50 (2026-11-18):** a IA responde também se a vaga
+  exige inglês acima do nível de "Idiomas" como requisito (não como diferencial). Se sim, o código limita a
+  nota a 50, a pedido do autor: a vaga que bate em todo o resto ainda sai (recrutador aborda essas também), e
+  qualquer outra lacuna a derruba. Vaga escrita em inglês que não pede inglês não conta. Visto antes: uma vaga
+  pedindo "Professional working English" passou do corte contra um currículo A2, porque a regra do prompt só
+  baixava a nota.
 - **Descrição cortada em 6.000 caracteres** (~1.500 tokens): cabe na cota por minuto sem perder os
   requisitos, que costumam vir no fim.
 - A nota já dada fica em memória (até 500 vagas): uma vaga que volta no ciclo seguinte (canal fora) não
@@ -260,12 +266,19 @@ ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe s
   fora do currículo cai; `habilidades_sob_demanda` (ex.: Railway, Vercel) só entra se a vaga citar.
 - **Resumo com falha segura:** se citar termo técnico que o currículo não tem, ou um nível (júnior, pleno,
   sênior), volta o resumo original. Modelo de trabalho e salário nunca entram no currículo.
+- **O resumo descreve o candidato, nunca a vaga (2026-11-18):** o prompt proíbe usar tarefas, objetivo,
+  produto, empresa ou área de negócio da vaga como se fossem experiência. No código, uma palavra do título da
+  vaga que o currículo não tem (ex.: "trading") devolve o resumo original. Visto antes: "Construir e entregar
+  funcionalidades full-stack para plataforma de trading" num currículo sem trading, o que passa a sensação de
+  mentira. Palavra comum vinda da descrição ("verificação empírica") não é barrada no código: dependeria de
+  comparar texto livre e jogaria fora quase todo resumo ajustado.
 - **Projeto fixo** (`fixo: true`) entra sempre; a IA escolhe mais um.
 - **Modelo maior para isso** (`LLM_TAILOR_MODEL`, padrão `gpt-oss-120b`): a Groq limita cada modelo à
   parte, então ajustar currículo não gasta a cota da nota. São poucas vagas por dia.
 - **PDF com fpdf2**, uma coluna e fonte embutida (leitura boa em ATS). WeasyPrint foi descartado: precisa
   de Pango/GTK no sistema, não roda no Windows sem instalar isso e engorda a imagem. O custo do fpdf2: a
-  fonte embutida só tem Latin-1, então travessão, reticências e aspas curvas viram ASCII.
+  fonte embutida só tem Latin-1, então travessão, reticências e aspas curvas viram ASCII, e qualquer traço
+  ou espaço Unicode vira `-` ou espaço (o hífen que não quebra linha saía como "full?stack").
 - O PDF tem data de criação fixa: o mesmo currículo dá os mesmos bytes e a mesma chave de idempotência.
 
 ### D5. Canal Telegram (2026-11-13)

@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
-from app.services.resume_pdf import render_pdf
+from app.services.resume_pdf import _latin1, render_pdf
 from app.services.tailor import (
     ResumeTailor,
     TailorChoice,
@@ -97,6 +97,15 @@ def test_plain_words_at_a_sentence_start_and_joined_known_terms_are_kept(resume:
     assert safe_summary(candidate, resume, resume.prompt_text(TODAY), "Vaga com Spark e Go.") == candidate
 
 
+def test_a_summary_with_a_word_of_the_job_title_the_resume_lacks_falls_back(resume: Resume) -> None:
+    # "plataforma de trading" read as experience the candidate does not have (seen on 2026-11-18).
+    known = resume.prompt_text(TODAY)
+    title = "Full Stack Engineer — Trading Platform (AI-Native)"
+    borrowed = "Atuei com Go em plataforma de trading."
+    assert safe_summary(borrowed, resume, known, "Python and React.", title) == resume.resumo
+    assert safe_summary("Atuei com Go em pipelines.", resume, known, "Python and React.", title) != resume.resumo
+
+
 def test_a_safe_summary_is_kept(resume: Resume) -> None:
     candidate = "Engenheira de dados  com Go e Kafka."
     assert safe_summary(candidate, resume, resume.prompt_text(TODAY)) == "Engenheira de dados com Go e Kafka."
@@ -117,6 +126,12 @@ def test_pdf_renders_llm_punctuation_and_is_the_same_every_time(resume: Resume, 
 
     assert first.startswith(b"%PDF")
     assert first == again
+
+
+@pytest.mark.parametrize("char", ["\u2010", "\u2011", "\u2012", "\u2212", "\u2013"])
+def test_pdf_text_turns_any_dash_into_a_hyphen_not_a_question_mark(char: str) -> None:
+    # The PDF showed "full?stack" and "Front?end" for a hyphen the LLM wrote (seen on 2026-11-18).
+    assert _latin1(f"full{char}stack\u202fe\u2009Front{char}end") == "full-stack e Front-end"
 
 
 async def test_tailor_builds_the_pdf_once_and_never_sends_contact_data(resume: Resume, contact: Contact) -> None:

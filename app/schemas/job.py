@@ -111,6 +111,7 @@ class Assessment(BaseModel):
     workplace: Workplace
     reasons: str = Field(max_length=MAX_TEXT)
     gaps: tuple[str, ...] = Field(default=(), max_length=MAX_GAPS)
+    english_above_resume: bool = False  # the job requires English above the resume's level
 
     @field_validator("reasons", mode="before")
     @classmethod

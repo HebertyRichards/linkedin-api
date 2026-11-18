@@ -225,3 +225,17 @@ async def test_a_job_that_names_no_resume_technology_scores_at_most_30(
         result = await assessor.assess(job(1, "Consultores de Plataformas Digitais"), details)
 
     assert result is not None and result.score == score
+
+
+@pytest.mark.parametrize(("english_above_resume", "score"), [(True, 50), (False, 90)])
+async def test_a_job_requiring_english_above_the_resume_scores_at_most_50(
+    resume: Resume, english_above_resume: bool, score: int
+) -> None:
+    # "Professional working English" against an A2 resume passed with a high score (seen on 2026-11-18).
+    content = {"score": 90, "workplace": "onsite", "reasons": "Stack parecida.", "gaps": []}
+    content["english_above_resume"] = english_above_resume
+    assessor, client = assessor_for(lambda _: reply(json.dumps(content)), resume)
+    async with client:
+        result = await assessor.assess(job(1), DETAILS)
+
+    assert result is not None and result.score == score

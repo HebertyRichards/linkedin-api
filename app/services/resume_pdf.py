@@ -2,6 +2,7 @@
 read this layout best, and it needs no font file nor system library (it runs the same on Windows and in
 the slim Docker image)."""
 
+import unicodedata
 from datetime import UTC, datetime
 
 from fpdf import FPDF
@@ -21,6 +22,7 @@ _TO_LATIN1 = str.maketrans(
         "\u2018": "'",
         "\u2019": "'",
         "\u2192": "->",  # arrow
+        "\u2212": "-",  # minus sign
         "\u00a0": " ",  # no-break space
     }
 )
@@ -29,8 +31,16 @@ _ACCENT = (40, 90, 160)
 _CREATED = datetime(2026, 1, 1, tzinfo=UTC)
 
 
+def _plain(char: str) -> str:
+    """Any dash (hyphen, non-breaking hyphen...) and any space (thin, narrow no-break...) as the ASCII one:
+    a list of them always misses one, and the PDF showed "full?stack" for a non-breaking hyphen."""
+    category = unicodedata.category(char)
+    return "-" if category == "Pd" else " " if category == "Zs" else char
+
+
 def _latin1(text: str) -> str:
-    return text.translate(_TO_LATIN1).encode("latin-1", "replace").decode("latin-1")
+    plain = "".join(map(_plain, text.translate(_TO_LATIN1)))
+    return plain.encode("latin-1", "replace").decode("latin-1")
 
 
 def _month(value: str | None) -> str:

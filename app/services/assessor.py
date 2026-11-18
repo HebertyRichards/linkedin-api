@@ -21,6 +21,10 @@ _YEARS = r"\+?\s*(?:(?:a|-|\u2013|to|ou)\s*\d+\s*|ou mais\s*|or more\s*)?(?:anos
 # A job text that names none of the resume's technologies has no evidence of fit: the score goes no higher.
 # The prompt says so too, but a model scored a sales posting of one sentence 100 ("nothing is missing").
 NO_EVIDENCE_MAX_SCORE = 30
+# A job requiring English above the resume's level scores at most this: still MIN_SCORE (50), so a job that
+# fits in everything else goes out (recruiters reach out for those too), and any other gap drops it. The rule
+# in the prompt only lowered the score: a job asking "Professional working English" of an A2 resume passed.
+ENGLISH_MAX_SCORE = 50
 _VERSION = rf"\s+v?\d+(?:\.(?:\d+|x))*\+?(?!\w|\.\w)(?!{_YEARS})"
 
 _SYSTEM_PROMPT = """You score how well a job posting fits a candidate's resume.
@@ -45,6 +49,9 @@ Rules:
   avançado a sênior", LinkedIn's "Mid-Senior level") is not a senior role: score it on its requirements.
 - workplace: "onsite" only when the job requires working at the office every day; "hybrid" when it
   mixes office and remote days; "remote" when fully remote; "unknown" when the posting does not say.
+- english_above_resume: true only when the job requires (must-have, not nice-to-have) English above the
+  level in the resume's "Idiomas", such as "professional working English", fluent or advanced. A posting
+  written in English that does not ask for English is false.
 - reasons: one short sentence in Brazilian Portuguese, at most 25 words, saying why the score.
 - gaps: up to 5 short items in Brazilian Portuguese, each something the job asks and the resume lacks.
 - Never credit the candidate with a skill the resume does not list.
@@ -63,8 +70,9 @@ _RESPONSE_FORMAT = {
                 "workplace": {"type": "string", "enum": ["remote", "hybrid", "onsite", "unknown"]},
                 "reasons": {"type": "string"},
                 "gaps": {"type": "array", "items": {"type": "string"}},
+                "english_above_resume": {"type": "boolean"},
             },
-            "required": ["score", "workplace", "reasons", "gaps"],
+            "required": ["score", "workplace", "reasons", "gaps", "english_above_resume"],
             "additionalProperties": False,
         },
     },
@@ -145,6 +153,9 @@ class JobAssessor:
         if assessment.score > NO_EVIDENCE_MAX_SCORE and (self._names is None or not self._names.search(text)):
             logger.info("Score of %s capped at %d: the job names no resume technology", job.key, NO_EVIDENCE_MAX_SCORE)
             assessment = assessment.model_copy(update={"score": NO_EVIDENCE_MAX_SCORE})
+        if assessment.english_above_resume and assessment.score > ENGLISH_MAX_SCORE:
+            logger.info("Score of %s capped at %d: the job requires more English", job.key, ENGLISH_MAX_SCORE)
+            assessment = assessment.model_copy(update={"score": ENGLISH_MAX_SCORE})
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = assessment
