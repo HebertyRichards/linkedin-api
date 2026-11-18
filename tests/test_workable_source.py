@@ -74,7 +74,11 @@ async def test_job_is_parsed_and_link_rebuilt_from_the_code() -> None:
     body = answer(
         item("jr513vzR29GbUbPCaRd2Dh", company={"title": "Blackbird"}, workplace="on_site"),
         item("abc123", location={"city": "", "subregion": None, "countryName": "Brazil"}),
-        item("def456", location={"city": "Barueri", "subregion": "São Paulo", "countryName": "Brazil"}, workplace="hybrid"),
+        item(
+            "def456",
+            location={"city": "Barueri", "subregion": "São Paulo", "countryName": "Brazil"},
+            workplace="hybrid",
+        ),
         item("ghi789", url="https://jobs.workable.com/view/ghi789"),
     )
     async with serving(body) as client:

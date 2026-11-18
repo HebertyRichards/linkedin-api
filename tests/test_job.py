@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.job import Job, Source
+from app.schemas.job import Job, JobDetails, Source
+from app.sources.base import DetailsCache
 from app.utils.html_text import html_to_text
 
 
@@ -42,3 +43,13 @@ def test_an_id_that_does_not_fit_its_source_is_refused(source: Source, job_id: s
 def test_html_to_text_keeps_words_apart_and_decodes_entities() -> None:
     fragment = "<p>Vaga <strong>Python</strong>&nbsp;&amp; Go</p><ul><li>SQL</li><li>Docker</li></ul>"
     assert html_to_text(fragment) == "Vaga Python & Go SQL Docker"
+
+
+def test_details_cache_holds_a_whole_digest_of_the_widest_source() -> None:
+    # A digest reads every job first and asks the pages afterwards: Remotar's 3 searches of 4 alternatives,
+    # 50 jobs each, must all still be there.
+    cache = DetailsCache()
+    jobs = [Job(id=str(n), title="Dev", source="remotar") for n in range(3 * 4 * 50)]
+    for job in jobs:
+        cache.keep(job, JobDetails(description="text"))
+    assert cache.get(jobs[0]).description == "text"

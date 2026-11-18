@@ -190,7 +190,7 @@ async def test_answer_without_the_job_list_is_a_failure(body: str) -> None:
     async with serving(body) as client:
         himalayas = source(client)
         for _ in range(3):
-            with pytest.raises(SourceUnavailableError, match="API changed") as failed:
+            with pytest.raises(SourceUnavailableError, match="layout changed") as failed:
                 await himalayas.fetch_recent("python", "Brazil", window_seconds=3600)
             assert not failed.value.blocked
         with pytest.raises(SourceUnavailableError, match="circuit open"):

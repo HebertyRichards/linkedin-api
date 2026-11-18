@@ -282,10 +282,12 @@ class Watcher:
 
     async def _read_sources(self, window_seconds: int | None) -> list[tuple[JobSource, list[tuple[str, list[Job]]]]]:
         """Every source at the same time: each waits on its own site, so a slow one does not hold the others.
-        Within a source the searches stay one after another, spaced. Results come in the order of the sources."""
+        Within a source the searches stay one after another, spaced. Results come in the order of the sources.
+        A bug in one read stops the others (TaskGroup): left running, they would overlap the next step's reads."""
         sources = list(self._sources.values())
-        reads = await asyncio.gather(*(self._read_searches(source, window_seconds) for source in sources))
-        return list(zip(sources, reads, strict=True))
+        async with asyncio.TaskGroup() as group:
+            reads = [group.create_task(self._read_searches(source, window_seconds)) for source in sources]
+        return [(source, read.result()) for source, read in zip(sources, reads, strict=True)]
 
     async def _read_searches(self, source: JobSource, window_seconds: int | None) -> list[tuple[str, list[Job]]]:
         """Each search that `source` answered, with its jobs. A failed search is logged and left out.
@@ -364,15 +366,17 @@ class Watcher:
         return _Batch(kept, scores, tailored, pending)
 
     async def _page(self, job: Job, pages: _Pages) -> JobDetails | None:
-        """The job page from the job's own source, spaced from that source's previous one in the run. None:
-        unavailable, or a block of that source earlier in the run (it stops that source's pages for the run)."""
+        """The job page from the job's own source, spaced from that source's previous request in the run (a source
+        whose pages come from its search makes none). None: unavailable, or a block of that source earlier in the
+        run (it stops that source's pages for the run)."""
         if job.source in pages.blocked:
             return None
-        if job.source in pages.fetched:
+        source = self._sources[job.source]
+        if job.source in pages.fetched and source.pages_need_requests:
             await asyncio.sleep(random.uniform(*self._job_page_spacing))  # noqa: S311
         pages.fetched.add(job.source)
         try:
-            return await self._sources[job.source].fetch_details(job)
+            return await source.fetch_details(job)
         except SourceUnavailableError as e:
             logger.warning("Job page of %s unavailable: %s", job.key, e)
             if e.blocked:

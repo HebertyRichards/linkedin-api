@@ -4,38 +4,21 @@ The JSON API behind its site, read without a key, login or cookies. It is not do
 change without notice. Automated reading carries the same kind of terms risk as the LinkedIn guest search.
 """
 
-import asyncio
-import logging
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from urllib.parse import quote
 
-import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
-from app.errors import SourceUnavailableError
 from app.schemas.job import Job, JobDetails, Source
-from app.sources.base import DetailsCache
-from app.utils.circuit_breaker import CircuitBreaker
+from app.sources.base import JSON_HEADERS, Listed, TermSearchSource
 from app.utils.html_text import html_to_text
-from app.utils.retry import parse_retry_after
-from app.utils.search_query import search_terms
-
-logger = logging.getLogger(__name__)
 
 SEARCH_URL = "https://api.remotar.com.br/jobs?search={term}"
-_TIMEOUT_SECONDS = 10.0
-_BLOCKED_STATUS = {403, 429}
-_HEADERS = {"User-Agent": "linkedin-api-job-alert/0.1", "Accept": "application/json"}
 # Only "remote" and "hybrid" were seen on 2026-11-18; "onsite" is a guess, and any other value adds no word.
 _WORKPLACES = {"remote": "Remoto", "hybrid": "Híbrido", "onsite": "Presencial"}
 # Jobs Remotar copies from Gupy: the Gupy source already reads them, so they would come twice under two keys.
 _SKIPPED_INTEGRATION = "gupy"
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 class _Company(BaseModel):
@@ -80,15 +63,10 @@ class _Item(BaseModel):
             source="remotar",
         )
 
-    @property
-    def described(self) -> bool:
-        return bool(html_to_text(self.description or ""))
-
-    def details(self, now: datetime) -> JobDetails:
+    def details(self, text: str, now: datetime) -> JobDetails:
         # The requirements are a list apart from the description and weigh most in the score, so they go with it.
         # A job without any text is scored on its title (low, so dropped) instead of failing its page.
         requirements = [html_to_text(r.description or "") for r in self.job_requirements]
-        text = html_to_text(self.description or "")
         if any(requirements):
             text = f"{text} Requisitos: {'; '.join(r for r in requirements if r)}"
         return JobDetails(
@@ -97,84 +75,22 @@ class _Item(BaseModel):
         )
 
 
-class _Page(BaseModel):
-    data: list[object]
-
-
-class RemotarSource:
+class RemotarSource(TermSearchSource):
+    # `location` is not used: Remotar lists remote jobs in Brazil only. Only page 1 (the newest 50) is read:
+    # results come newest first and the cycle asks for the last hour, so more than 50 new jobs is not expected.
     name: Source = "remotar"
 
-    def __init__(
-        self, client: httpx.AsyncClient, *, term_delay: float = 2.0, clock: Callable[[], datetime] = _utc_now
-    ) -> None:
-        self._client = client
-        self._term_delay = term_delay
-        self._clock = clock
-        self._breaker = CircuitBreaker(
-            failure_threshold=3, recovery_timeout=300.0, max_recovery_timeout=3600.0, name="remotar"
+    async def _fetch_term(self, term: str, window_seconds: int | None) -> list[object]:
+        response = await self._get(SEARCH_URL.format(term=quote(term, safe="")), headers=JSON_HEADERS)
+        return self._json_list(response, "data")
+
+    def _read(self, raw: object, now: datetime) -> Listed:
+        item = _Item.model_validate(raw)
+        text = html_to_text(item.description or "")
+        return Listed(
+            item.job(),
+            item.created_at,
+            bool(text),
+            lambda: item.details(text, now),
+            wanted=item.integration_source != _SKIPPED_INTEGRATION,
         )
-        self._details = DetailsCache()
-
-    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
-        # `location` is not used: Remotar lists remote jobs in Brazil only.
-        # Only page 1 (the newest 50) is read: results come newest first and the cycle runs every 30 minutes
-        # (POLL_INTERVAL_SECONDS), so a term with more than 50 new jobs in that time is not expected.
-        if not self._breaker.allow():
-            raise SourceUnavailableError("circuit open", blocked=True)
-        now = self._clock()
-        since = None if window_seconds is None else now - timedelta(seconds=window_seconds)
-        jobs: dict[str, Job] = {}
-        for index, term in enumerate(search_terms(keywords)):
-            if index:
-                await asyncio.sleep(self._term_delay)
-            raw_jobs = await self._fetch_term(term)
-            recognized = described = 0
-            for raw in raw_jobs:
-                try:
-                    item = _Item.model_validate(raw)
-                    job = item.job()
-                except ValueError:
-                    logger.debug("Skipped a Remotar job that failed validation (layout changed?)")
-                    continue
-                recognized += 1
-                described += item.described
-                if item.integration_source == _SKIPPED_INTEGRATION:
-                    continue
-                if (since is not None and item.created_at < since) or job.key in jobs:
-                    continue
-                jobs[job.key] = job
-                self._details.keep(job, item.details(now))
-            # A renamed field would otherwise pass for "no new jobs", or for jobs with no text, forever.
-            if raw_jobs and not recognized:
-                self._breaker.record_failure()
-                raise SourceUnavailableError("no job recognized in the answer: layout changed")
-            if recognized and not described:
-                self._breaker.record_failure()
-                raise SourceUnavailableError("no job description in the answer: layout changed")
-        self._breaker.record_success()
-        return list(jobs.values())
-
-    async def fetch_details(self, job: Job) -> JobDetails:
-        return self._details.get(job)
-
-    async def _fetch_term(self, term: str) -> list[object]:
-        url = SEARCH_URL.format(term=quote(term, safe=""))
-        try:
-            response = await self._client.get(url, headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
-        except httpx.HTTPError as e:
-            self._breaker.record_failure()
-            raise SourceUnavailableError(f"network error: {type(e).__name__}") from e
-
-        if response.status_code in _BLOCKED_STATUS:
-            retry_after = parse_retry_after(response.headers.get("retry-after"))
-            self._breaker.trip(retry_after)
-            raise SourceUnavailableError(f"blocked ({response.status_code})", blocked=True, retry_after=retry_after)
-        if response.status_code != 200:
-            self._breaker.record_failure()
-            raise SourceUnavailableError(f"status {response.status_code}")
-        try:
-            return _Page.model_validate_json(response.content).data
-        except ValueError:
-            # Not JSON (a challenge page) or no job list: a failure, not "no new jobs".
-            self._breaker.record_failure()
-            raise SourceUnavailableError("no job list in the answer: layout changed") from None

@@ -110,7 +110,11 @@ Webhook ou WebSocket só voltam ao escopo se:
     exemplos com `country=espana`); nada para infojobs.com.br, e pede credencial de app [V].
   - Vagas.com: nenhuma API pública encontrada [I].
 - **Vagas no exterior, grátis e sem chave** [V]: Himalayas (`country=BR`), Remotive, RemoteOK, Jobicy e o
-  RSS do We Work Remotely. Ficaram de fora por enquanto.
+  RSS do We Work Remotely. Himalayas entrou em D9; as outras ficaram de fora por enquanto.
+- **Segunda rodada (2026-11-18, D9)** [V]: Remotar (`api.remotar.com.br/jobs`), Himalayas
+  (`himalayas.app/jobs/api/search`, API documentada) e Workable (`jobs.workable.com/api/v1/jobs`) responderam
+  JSON sem chave, login nem cookie, e entraram. Catho e Indeed responderam 403; Vagas.com, InfoJobs BR e
+  Sólides só têm HTML ou pedem token; Trampos funciona, mas trouxe poucas vagas.
 - **MCP, descartado:** o comando `/vagas` do Telegram (D7) já cobre "consultar vagas com nota", e um MCP
   remoto no Railway seria uma porta aberta num projeto que hoje não abre nenhuma (seção 5).
 
@@ -360,9 +364,8 @@ Muda a regra de negócio: antes, só vaga com Easy Apply (`f_AL=true`); agora, t
 continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga termina com a fonte
 (LinkedIn / Gupy), onde a pessoa se candidata. Pesquisa das fontes em 1.5.
 
-- **Várias fontes:** `Watcher(sources=[...])`; o protocolo `JobSource` ganha `name` e `min_interval`. O ciclo
-  lê o LinkedIn toda vez e a Gupy no máximo a cada 30 min (pedido do autor, para pesar pouco num endpoint não
-  oficial). O resumo e o `/vagas` leem todas as fontes toda vez.
+- **Várias fontes:** `Watcher(sources=[...])`; o protocolo `JobSource` ganha `name`. (O `min_interval`, que
+  fazia o ciclo ler a Gupy no máximo a cada 30 min, saiu em D9: todas as fontes seguem o mesmo relógio.)
 - **A mesma busca nas duas:** `JOB_KEYWORDS` segue a sintaxe do LinkedIn. Na Gupy, cada alternativa do OR
   vira uma requisição (as 3 buscas do autor dão 12 por leitura), e os termos NOT são aplicados no título pelo
   worker, como no LinkedIn (`utils/search_query.py`). `JOB_LOCATION` não vale para a Gupy, que só tem vagas no
@@ -384,6 +387,26 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
 - **Custo:** mais vagas por dia para a IA avaliar [I] e o risco de termos de uma segunda fonte não oficial,
   aceito pelo autor.
 
+### D9. Remotar, Himalayas e Workable; todas as fontes no mesmo relógio e em paralelo (2026-11-18, pedido do autor)
+
+- **Novas fontes:** Remotar, Himalayas e Workable, todas sem chave, login nem cookie (pesquisa em 1.5). Cada
+  uma segue o modelo da Gupy: breaker próprio (403/429 é bloqueio), só a página 1 de cada alternativa do OR,
+  2 s entre elas, janela da última hora no ciclo, termos NOT aplicados no título, resposta sem vaga
+  reconhecida conta como falha. A descrição vem na própria busca: a página da vaga não é pedida.
+- **Só Brasil:** Remotar é de vagas remotas no Brasil; Himalayas usa `country=BR`; Workable usa
+  `location=Brazil` e descarta o item de outro país. `JOB_LOCATION` não vale para elas.
+- **Links:** montados do id, cujo formato é conferido por fonte (`remotar.com.br/job/<n>`,
+  `himalayas.app/companies/<empresa>/jobs/<slug>`, `jobs.workable.com/view/<código>`).
+- **Mesmo relógio:** toda fonte é lida em todo ciclo (`POLL_INTERVAL_SECONDS`, 30 min por padrão), no resumo
+  e no `/vagas`. Com as 3 buscas do autor (4 alternativas cada), são 12 requisições por fonte por ciclo.
+- **Em paralelo:** o ciclo, o resumo e o `/vagas` leem as fontes ao mesmo tempo (`asyncio.gather`, uma
+  tarefa por fonte; é um processo só, e a espera de rede de uma fonte não segura as outras). Dentro de uma
+  fonte, as buscas seguem uma por vez e espaçadas, para não pesar no site.
+- **Limites aceitos:** a mesma vaga publicada em duas fontes chega duas vezes (o autor recusou deduplicar por
+  título e empresa); no Remotar, as vagas que vêm da Gupy são puladas. A página da vaga no Himalayas tem
+  verificação da Cloudflare (abre no navegador, não em script). O Workable ordena por relevância, então só
+  a página 1 do último dia é lida. Mais fontes gastam mais notas da cota grátis do Groq.
+
 ---
 
 ## 3. Como funciona
@@ -394,12 +417,12 @@ boot ─► valida env (falha listando só NOMES) ─► carrega STATE_FILE (se 
   └─ estado vazio? ─► BASELINE: busca, marca tudo como visto, não envia nada
   │
 a cada 6h, nunca no boot: resumo das vagas de qualquer data em todas as fontes (LinkedIn sem f_TPR, até 3
-  páginas; Gupy, página 1, D8); dá nota a até 10
+  páginas; as outras fontes, página 1, D8/D9); dá nota a até 10
   ainda não vistas e manda numa mensagem só as de nota 50 ou mais; nenhuma: não manda nada
 loop a cada POLL_INTERVAL_SECONDS ±20% (o próximo ciclo só começa quando o atual termina):
-  1. para cada fonte (LinkedIn todo ciclo; Gupy no máximo a cada 30 min, D8) e cada busca (no máximo 3):
+  1. todas as fontes ao mesmo tempo (D9); em cada uma, uma busca por vez (no máximo 3):
        breaker da fonte aberto? → pula
-       lê a janela da última hora (LinkedIn: f_TPR=r3600, até 3 páginas; Gupy: página 1 por alternativa do OR)
+       lê a janela da última hora (LinkedIn: f_TPR=r3600, até 3 páginas; as outras: página 1 por alternativa do OR)
        → valida cada item no schema (o inválido é descartado) → título com termo NOT sai
        → novas = chave fonte:id não vista
   2. novas? → nota de cada uma; abaixo de 50, presencial ou encerrada → marca como vista e não envia
@@ -474,8 +497,8 @@ Aqui o rate limit é **de saída**: não existe API de entrada para limitar.
   - Jitter de ±20% no intervalo, para não bater sempre no mesmo segundo [I].
   - No máximo 3 buscas, com as requisições espaçadas dentro do ciclo. Um bloqueio (429) para a leitura
     daquela fonte na primeira busca: as outras só falhariam também.
-  - Gupy (D8): uma requisição por alternativa do OR, 2 s entre elas, no máximo a cada 30 min pelo ciclo,
-    mais o resumo e o `/vagas`. A página da vaga não é pedida: a descrição vem na busca.
+  - Gupy, Remotar, Himalayas e Workable (D8, D9): uma requisição por alternativa do OR, 2 s entre elas, a
+    cada ciclo, mais o resumo e o `/vagas`. A página da vaga não é pedida: a descrição vem na busca.
   - Sem login, sem cookies, de um único IP.
   - Com 3 buscas a cada 2 min, são ~2.160 requisições por dia.
 - **Resend:** 10 req/s e 100 por dia no plano grátis [V].
@@ -539,6 +562,7 @@ Railway responde 502). Toda chamada é **de saída**, do worker para seis servi�
 |---|---|---|---|---|
 | LinkedIn (`jobs-guest`) | nenhuma (página pública) | — | — | sem login nem cookie; resposta tratada como não confiável |
 | Gupy (`portal.gupy.io`) | nenhuma (página pública) | — | — | sem login nem cookie; JSON tratado como não confiável; subdomínio do link validado (D8) |
+| Remotar, Himalayas, Workable | nenhuma (JSON público) | — | — | sem login nem cookie; JSON tratado como não confiável; link montado do id com formato conferido (D9) |
 | Groq (`LLM_API_KEY`) | `Authorization: Bearer` | quem tiver a chave | gastar a cota grátis | plano grátis sem cartão: abuso não gera conta; só o currículo **sem** `contato` sai |
 | Resend (`RESEND_API_KEY`) | `Authorization: Bearer` | quem tiver a chave | enviar email em seu nome | chave "Sending access"; sem domínio, só envia para o email da própria conta |
 | Evolution (`EVOLUTION_API_KEY`) | header `apikey` | quem tiver a chave **e** a URL | enviar WhatsApp pelo seu número | token da instância, não o global; https obrigatório |
@@ -747,8 +771,8 @@ Os comentários ficam em inglês e enxutos.
   - [ ] `/vagas` manda 20 vagas com nota, da maior para a menor, inclusive abaixo de 50, sem marcar nada além das encerradas.
   - [ ] Mensagem de outro chat não roda nada nem recebe resposta.
 - **Fontes (D8):**
-  - [ ] Cada linha de vaga termina com a fonte (LinkedIn ou Gupy), e o link da Gupy abre a vaga certa.
-  - [ ] O ciclo lê a Gupy no máximo a cada 30 min; o resumo e o `/vagas` leem as duas fontes toda vez.
+  - [ ] Cada linha de vaga termina com a fonte (LinkedIn, Gupy, Remotar, Himalayas ou Workable), e o link abre a vaga certa.
+  - [ ] O ciclo, o resumo e o `/vagas` leem todas as fontes toda vez, ao mesmo tempo (D9).
   - [ ] A Gupy falhando por 1 hora gera um aviso só dela, e o LinkedIn segue avisando.
 
 ## 10. Fora do escopo do v1

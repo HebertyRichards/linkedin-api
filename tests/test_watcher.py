@@ -690,3 +690,55 @@ def test_messages_name_the_source_and_not_easy_apply() -> None:
     assert "Acme · São Paulo, Brazil · LinkedIn" in many.text
     assert "Acme · Remoto · Gupy" in many.text
     assert "Acme · Remoto · Gupy" in many.html and "Acme · Remoto · Gupy" in many.telegram_blocks[2]
+
+
+async def test_job_pages_are_spaced_only_when_they_cost_a_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Gupy-like sources keep each job's page from their search: waiting between them would only stall the run.
+    waits: list[float] = []
+
+    async def no_wait(seconds: float) -> None:
+        waits.append(seconds)
+
+    linkedin = FakeSource([[job(1), job(2), job(3)]])
+    gupy = FakeSource([[gupy_job(1), gupy_job(2), gupy_job(3)]], name="gupy")
+    gupy.pages_need_requests = False
+    clock = Clock()
+    watcher = make_watcher(None, [FakeNotifier("email")], clock=clock, sources=[linkedin, gupy])
+    watcher._job_page_spacing = (5.0, 5.0)
+    monkeypatch.setattr("app.services.watcher.asyncio.sleep", no_wait)
+
+    clock.advance(minutes=360)
+    await watcher.digest_if_due()
+
+    assert len(gupy.detail_calls) == 3 and len(linkedin.detail_calls) == 3
+    assert waits.count(5.0) == 2  # LinkedIn's 2nd and 3rd pages; none between Gupy's
+
+
+class _Broken(FakeSource):
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
+        raise RuntimeError("a bug in this source's parser")
+
+
+class _Hangs(FakeSource):
+    """Never answers; `cancelled` tells whether its read was stopped."""
+
+    cancelled = False
+
+    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return []
+
+
+async def test_a_bug_in_one_source_stops_the_other_reads() -> None:
+    # Left running, the other reads would outlive the failed step and overlap the next one on the same site.
+    hangs = _Hangs([[]], name="gupy")
+    watcher = make_watcher(None, [FakeNotifier("email")], sources=[_Broken([[]]), hangs])
+
+    with pytest.raises((RuntimeError, ExceptionGroup)):
+        await asyncio.wait_for(watcher.cycle(), timeout=1)
+    await asyncio.sleep(0)
+    assert hangs.cancelled

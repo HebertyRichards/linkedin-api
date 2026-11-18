@@ -5,31 +5,20 @@ Next.js embeds in it (`__NEXT_DATA__`), so the markup can change without notice.
 no cookies on purpose. Automated reading carries the same kind of terms risk as the LinkedIn guest search.
 """
 
-import asyncio
 import html
 import json
-import logging
 import re
-from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from urllib.parse import quote, urlsplit
 
-import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from app.errors import SourceUnavailableError
 from app.schemas.job import Job, JobDetails, Source
-from app.sources.base import DetailsCache
-from app.utils.circuit_breaker import CircuitBreaker
-from app.utils.retry import parse_retry_after
-from app.utils.search_query import search_terms
-
-logger = logging.getLogger(__name__)
+from app.sources.base import Listed, TermSearchSource
 
 SEARCH_URL = "https://portal.gupy.io/job-search/term={term}"
-_TIMEOUT_SECONDS = 10.0
-_BLOCKED_STATUS = {403, 429}
 _HEADERS = {"User-Agent": "linkedin-api-job-alert/0.1", "Accept": "text/html"}
 _NEXT_DATA = re.compile(r'<script[^>]*\bid="__NEXT_DATA__"[^>]*>(.*?)</script>', re.DOTALL)
 _JOB_LIST_PATH = ("props", "pageProps", "initialJobList", "data")
@@ -37,10 +26,6 @@ _JOB_LIST_PATH = ("props", "pageProps", "initialJobList", "data")
 _CAREER_HOST = re.compile(r"([a-z0-9-]+)\.gupy\.io")
 _WORKPLACES = {"remote": "Remoto", "hybrid": "Híbrido", "on-site": "Presencial"}
 _EMPLOYMENT = {"vacancy_type_effective": "Efetivo (CLT)", "vacancy_legal_entity": "Pessoa jurídica (PJ)"}
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
 
 
 class _Item(BaseModel):
@@ -113,77 +98,19 @@ def parse_job_list(page: str) -> list[object]:
     return data
 
 
-class GupyPortalSource:
+class GupyPortalSource(TermSearchSource):
+    # `location` is not used: Gupy lists jobs in Brazil only. Only page 1 (the newest 12) is read: results come
+    # newest first and the cycle asks for the last hour, so a term with more than 12 new jobs is not expected.
     name: Source = "gupy"
 
-    def __init__(
-        self, client: httpx.AsyncClient, *, term_delay: float = 2.0, clock: Callable[[], datetime] = _utc_now
-    ) -> None:
-        self._client = client
-        self._term_delay = term_delay
-        self._clock = clock
-        self._breaker = CircuitBreaker(
-            failure_threshold=3, recovery_timeout=300.0, max_recovery_timeout=3600.0, name="gupy"
-        )
-        self._details = DetailsCache()
-
-    async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
-        # `location` is not used: Gupy lists jobs in Brazil only.
-        # Only page 1 (the newest 12) is read: results come newest first and the cycle runs every 30 minutes
-        # (POLL_INTERVAL_SECONDS), so a term with more than 12 new jobs in that time is not expected.
-        if not self._breaker.allow():
-            raise SourceUnavailableError("circuit open", blocked=True)
-        now = self._clock()
-        since = None if window_seconds is None else now - timedelta(seconds=window_seconds)
-        jobs: dict[str, Job] = {}
-        for index, term in enumerate(search_terms(keywords)):
-            if index:
-                await asyncio.sleep(self._term_delay)
-            raw_jobs = await self._fetch_term(term)
-            recognized = described = 0
-            for raw in raw_jobs:
-                try:
-                    item = _Item.model_validate(raw)
-                    job = item.job()
-                except ValueError:
-                    logger.debug("Skipped a Gupy job that failed validation (layout changed?)")
-                    continue
-                recognized += 1
-                described += item.described
-                if (since is not None and item.published_date < since) or job.key in jobs:
-                    continue
-                jobs[job.key] = job
-                self._details.keep(job, item.details(now))
-            # A renamed field would otherwise pass for "no new jobs", or for jobs with no text, forever.
-            if raw_jobs and not recognized:
-                self._breaker.record_failure()
-                raise SourceUnavailableError("no job recognized on the page: layout changed")
-            if recognized and not described:
-                self._breaker.record_failure()
-                raise SourceUnavailableError("no job description on the page: layout changed")
-        self._breaker.record_success()
-        return list(jobs.values())
-
-    async def fetch_details(self, job: Job) -> JobDetails:
-        return self._details.get(job)
-
-    async def _fetch_term(self, term: str) -> list[object]:
-        url = SEARCH_URL.format(term=quote(term, safe=""))
-        try:
-            response = await self._client.get(url, headers=_HEADERS, timeout=_TIMEOUT_SECONDS)
-        except httpx.HTTPError as e:
-            self._breaker.record_failure()
-            raise SourceUnavailableError(f"network error: {type(e).__name__}") from e
-
-        if response.status_code in _BLOCKED_STATUS:
-            retry_after = parse_retry_after(response.headers.get("retry-after"))
-            self._breaker.trip(retry_after)
-            raise SourceUnavailableError(f"blocked ({response.status_code})", blocked=True, retry_after=retry_after)
-        if response.status_code != 200:
-            self._breaker.record_failure()
-            raise SourceUnavailableError(f"status {response.status_code}")
+    async def _fetch_term(self, term: str, window_seconds: int | None) -> list[object]:
+        response = await self._get(SEARCH_URL.format(term=quote(term, safe="")), headers=_HEADERS)
         try:
             return parse_job_list(response.text)
         except SourceUnavailableError:
             self._breaker.record_failure()
             raise
+
+    def _read(self, raw: object, now: datetime) -> Listed:
+        item = _Item.model_validate(raw)
+        return Listed(item.job(), item.published_date, item.described, lambda: item.details(now))

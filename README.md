@@ -1,8 +1,10 @@
 # linkedin-api
 
-A small worker that watches job searches on **LinkedIn** and **Gupy** and alerts you, by **email (Resend)**,
+A small worker that watches job searches on **LinkedIn**, **Gupy**, **Remotar**, **Himalayas** and **Workable**
+and alerts you, by **email (Resend)**,
 **WhatsApp (Evolution API)** or **Telegram (Bot API)**, when a new job that fits your resume shows up, Easy
-Apply or not. Each job line ends with its source (LinkedIn / Gupy), where you apply. One configured channel
+Apply or not. Each job line ends with its source (LinkedIn, Gupy, Remotar, Himalayas or Workable), where you
+apply. One configured channel
 must accept each alert; the others are the fallback.
 
 It does not apply for you and needs no database.
@@ -13,24 +15,25 @@ It does not apply for you and needs no database.
 > search per cycle, no login, no cookies, and it backs off when LinkedIn answers 429. Never point it at a
 > logged-in session.
 >
-> Gupy has no official search API either. The worker reads its public search page (`portal.gupy.io`) and the
-> JSON embedded in it, which can change without notice; the terms risk is the same kind. To keep the load low,
-> the cycle reads Gupy at most every 30 minutes, with no login and no cookies.
+> The other sources are read the same way, with no key, no login and no cookies: Gupy's public search page
+> (`portal.gupy.io`, the JSON embedded in it), Remotar's and Workable's site JSON (undocumented) and Himalayas'
+> public API (documented). Any of them can change without notice, and the terms risk is the same kind. Every
+> source is read once per cycle (`POLL_INTERVAL_SECONDS`, 30 min by default), all of them at the same time.
 
 ## How it works
 
 ```
 every 6 hours, never at boot: digest
-  for each search, on every source: jobs of any date (LinkedIn: no f_TPR, up to 3 pages; Gupy: page 1)
+  for each search, on every source: jobs of any date (LinkedIn: no f_TPR, up to 3 pages; the others: page 1)
   score the jobs not seen yet 10 at a time until a round has one scored 50 or more (at most 5 rounds,
   50 scores); send that round's 50+ in one message; none after 5 rounds: no message
   /resumo on Telegram runs the same digest now, without moving the 6-hour clock
   /vagas on Telegram lists 20 jobs of any date with their scores, whatever the score; marks nothing but closed jobs
 
-every ~30 min (±20%)
-  LinkedIn, every cycle: for each search (max 3), jobs posted in the last hour (f_TPR=r3600), up to 3 pages
-  Gupy, at most every 30 min: each OR alternative of each search is one request (page 1, the 12 newest),
-    jobs published in the last hour
+every ~30 min (±20%), all sources at the same time (one asyncio task each; searches inside a source in turn)
+  LinkedIn: for each search (max 3), jobs posted in the last hour (f_TPR=r3600), up to 3 pages
+  Gupy, Remotar, Himalayas, Workable: each OR alternative of each search is one request (page 1, 2 s apart),
+    jobs published in the last hour; quotes are dropped
   titles with a NOT term are dropped; new = job keys (source:id) not seen before
   first read of a search on a source = baseline: what is already posted is marked as seen, nothing is sent
   score each new job: 50 or more -> send    below 50, on-site or closed -> marked as seen, never sent
@@ -43,7 +46,9 @@ every ~30 min (±20%)
   bulk sending.
 - **Links are rebuilt from the job id** (`https://www.linkedin.com/jobs/view/<id>/`), never copied from the
   page. A Gupy link is `https://<company>.gupy.io/job/<token>`: the token is built from the id, and only the
-  company's career subdomain comes from the page, accepted as a single DNS label under `gupy.io`.
+  company's career subdomain comes from the page, accepted as a single DNS label under `gupy.io`. Remotar,
+  Himalayas and Workable links are built the same way from an id whose shape is checked
+  (`remotar.com.br/job/<n>`, `himalayas.app/companies/<company>/jobs/<slug>`, `jobs.workable.com/view/<code>`).
 - **"Delivered" means the provider accepted the message** (a 2xx from Resend, Evolution or Telegram). If the primary
   times out after sending and the fallback also succeeds, you get the alert twice. That is the
   at-least-once trade-off.
@@ -57,10 +62,10 @@ every ~30 min (±20%)
   the resume YAML already has and rewrites the summary; the code checks every pick and drops a summary
   that names a technology or a seniority level the resume does not have. Telegram gets the PDF right after
   the text; WhatsApp gets the text only.
-- **If a job source fails for 1 hour in a row,** you get one "source failing" alert naming it (LinkedIn or
-  Gupy). It is not repeated until that source recovers. A failure is an error, a block, or a page the parser
-  no longer recognizes (the markup or the embedded JSON changed, or a challenge page came back); a Gupy page
-  where no job is recognized is a failure, not "0 jobs".
+- **If a job source fails for 1 hour in a row,** you get one "source failing" alert naming it (LinkedIn, Gupy,
+  Remotar, Himalayas or Workable). It is not repeated until that source recovers. A failure is an error, a block, or a page the parser
+  no longer recognizes (the markup or the embedded JSON changed, or a challenge page came back); a Gupy,
+  Remotar, Himalayas or Workable answer where no job is recognized is a failure, not "0 jobs".
 - **A cycle logs one line** (`Cycle done: 2 of 2 search(es) answered, 1 new job(s)`) only when it found new jobs
   or a search failed; a quiet cycle logs at `DEBUG`. The `Digest done` line every 6 hours shows the worker is
   alive. A block (429) stops that source's read at the first search, with one warning. Logs go to stdout.
@@ -73,8 +78,8 @@ error names the missing variables and never prints their values.
 
 | Variable | Required | Default | What it is |
 |---|---|---|---|
-| `JOB_KEYWORDS` | yes | — | Up to 3 searches, comma separated: `python, typescript`, in LinkedIn's syntax (`(a OR b) NOT senior`). Try each term in LinkedIn's search first: a term LinkedIn does not recognize is dropped, and the search returns jobs from any field. Gupy gets the same value: each OR alternative is its own request, and NOT terms are applied to the title by the worker |
-| `JOB_LOCATION` | yes | — | **English** name as LinkedIn spells it: `Brazil`, `São Paulo`. `Brasil` is ignored by LinkedIn and returns US jobs. Gupy ignores it (Brazil only) |
+| `JOB_KEYWORDS` | yes | — | Up to 3 searches, comma separated: `python, typescript`, in LinkedIn's syntax (`(a OR b) NOT senior`). Try each term in LinkedIn's search first: a term LinkedIn does not recognize is dropped, and the search returns jobs from any field. The other sources get the same value: each OR alternative is its own request, quotes are dropped, and NOT terms are applied to the title by the worker |
+| `JOB_LOCATION` | yes | — | **English** name as LinkedIn spells it: `Brazil`, `São Paulo`. `Brasil` is ignored by LinkedIn and returns US jobs. The other sources ignore it: Gupy, Remotar, Himalayas and Workable are fixed on Brazil |
 | `RESEND_API_KEY` | email | — | Resend API key |
 | `EMAIL_TO` | email | — | Who gets the email |
 | `EMAIL_FROM` | no | `onboarding@resend.dev` | Sender |
@@ -184,7 +189,7 @@ more. The first digest runs 6 hours after the boot: every deploy restarts that c
 | Dependency | Circuit breaker | Retries |
 |---|---|---|
 | LinkedIn search | Opens after 3 failures, or at once on 429/999. Waits 5 min, doubling up to 60 min, and honors `Retry-After` | None inside a cycle; the next cycle is the retry |
-| Gupy search | Same as LinkedIn, opening at once on 403/429 | None; the next read is the retry |
+| Gupy, Remotar, Himalayas, Workable search | Same as LinkedIn, opening at once on 403/429; one breaker each | None; the next cycle is the retry |
 | Resend | Opens after 5 failures, for 60 s | 3 attempts on network errors, 429 and 5xx. The `Idempotency-Key` makes a repeat safe |
 | Evolution | Opens after 5 failures, for 30 s | 3 attempts, only when the request never left (connection error) or on 5xx. A read timeout is never retried, because the message may have gone |
 | Telegram | Opens after 5 failures, for 30 s | Same as Evolution, plus a 429 whose `retry_after` is up to 30 s. A longer wait hands the alert to the next channel |
@@ -199,7 +204,7 @@ complete: a part repeated on Telegram is better than a job or a resume lost.
 
 ## Security
 
-- **No one can call this project:** it opens no port and has no route. Every call goes out (LinkedIn, Gupy,
+- **No one can call this project:** it opens no port and has no route. Every call goes out (the job sources,
   Groq, Resend, Evolution, Telegram), so the real entry points are the API keys in Railway Variables. See SCOPE.md 5.
 - **Health:** a watchdog thread exits with code 1 when the loop stops for 2 h (30 min poll), and Railway's
   On Failure restart policy brings it back. No `/health` endpoint: Railway checks it only at deploy time.
@@ -212,6 +217,10 @@ complete: a part repeated on Telegram is better than a job or a resume lost.
   (`m***@example.com`, `5511*****9999`).
 - **Job data is untrusted.** Each job is validated by a schema with bounded lengths, the text is
   HTML-escaped in emails, and links are rebuilt from the id (Gupy: plus the validated career subdomain).
+- **Known limits of the extra sources:** the same job posted on two sources arrives twice (no dedupe by title
+  and company, on purpose). Remotar's jobs reposted from Gupy are skipped. Himalayas job pages sit behind a
+  Cloudflare check, so they open in a browser but not in scripts. Workable sorts by relevance, so only the last
+  day's page 1 is read. More sources mean more AI scores per cycle on Groq's free quota.
 - **The state file keeps only job ids and dates.** No titles, companies or recruiters.
 - **Secret scanning:** gitleaks runs in CI (`.github/workflows/ci.yml`) and as a pre-commit hook
   (`pip install pre-commit && pre-commit install`).

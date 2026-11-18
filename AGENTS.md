@@ -3,7 +3,8 @@
 Guide for AI agents (and humans) working in this repository. **These rules take precedence over any
 default behavior.** Goal: small changes in the style of the existing code, without overengineering.
 
-A single-process asyncio **worker**: it polls LinkedIn's and Gupy's public job searches, scores the new jobs
+A single-process asyncio **worker**: it polls the public job searches of LinkedIn, Gupy, Remotar, Himalayas and
+Workable (all at once, every cycle), scores the new jobs
 (any kind of application; it never applies) and alerts by email (Resend), WhatsApp (Evolution API) or Telegram
 (Bot API). No HTTP server and no database. The decisions and their sources are in [SCOPE.md](SCOPE.md).
 
@@ -37,15 +38,16 @@ app/
   errors.py                # SourceUnavailableError, RetryableError, Channel*Error
   schemas/job.py           # Job, JobDetails, Assessment: the boundary for source and LLM data
   schemas/resume.py        # resume YAML without the contact block (the only part an LLM sees)
-  sources/                 # JobSource protocol + linkedin_guest (public search page) + gupy_portal
-                           # (__NEXT_DATA__ JSON of portal.gupy.io, read by the cycle every 30 min)
+  sources/                 # JobSource protocol + DetailsCache + linkedin_guest (public search page) +
+                           # gupy_portal (__NEXT_DATA__ JSON of portal.gupy.io) + remotar, himalayas,
+                           # workable (public JSON); all read on every cycle, at the same time
   channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution) + telegram (Bot API)
   services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
                            # llm (chat client, one breaker per model), assessor (job score),
                            # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
   utils/                   # circuit_breaker, retry, mask, watchdog (exit 1 on a stalled loop),
-                           # search_query (NOT terms of a search, shared by the watcher and Gupy)
+                           # search_query (NOT terms and OR alternatives of a search), html_text
 tests/
 ```
 
@@ -57,9 +59,10 @@ tests/
 - **The dispatcher** only orders the channels.
 - **The watcher** only decides what is new and what is marked as seen. A job is marked **only after**
   a channel accepted it.
-- **New source:** a class with the `JobSource` shape (`name`, `min_interval`, `fetch_recent`,
-  `fetch_details`), added to the `sources` list in `main.py`; its name goes in `Source` and `SOURCE_LABELS`
-  (`schemas/job.py`).
+- **New source:** a class with the `JobSource` shape (`name`, `pages_need_requests`, `fetch_recent`,
+  `fetch_details`), added to the `sources` list in `main.py`; its name and id shape go in `Source`,
+  `SOURCE_LABELS` and `_ID_SHAPES` (`schemas/job.py`). A search that already brings the description (no OR/NOT)
+  subclasses `TermSearchSource` (`sources/base.py`) and writes only `_fetch_term` and `_read`.
 - **New channel:** a class with the `Notifier` shape, wired in `main.py`. Nothing else changes.
 
 ## Mandatory validation

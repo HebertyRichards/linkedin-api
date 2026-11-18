@@ -139,6 +139,7 @@ class FakeSource:
         name: Source = "linkedin",
     ) -> None:
         self.name: Source = name
+        self.pages_need_requests = True
         self._results = results
         self.details = details
         self.calls = 0

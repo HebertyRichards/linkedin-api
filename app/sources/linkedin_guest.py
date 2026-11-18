@@ -171,6 +171,7 @@ def parse_cards(html: str) -> tuple[list[Job], int]:
 
 class LinkedInGuestSource:
     name: Source = "linkedin"
+    pages_need_requests = True
 
     def __init__(self, client: httpx.AsyncClient, *, page_delay: float = 1.5) -> None:
         self._client = client

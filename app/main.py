@@ -23,7 +23,10 @@ from app.services.tailor import ResumeTailor
 from app.services.watcher import DIGEST_EVERY, INTERVAL_JITTER, Watcher
 from app.sources.base import JobSource
 from app.sources.gupy_portal import GupyPortalSource
+from app.sources.himalayas import HimalayasSource
 from app.sources.linkedin_guest import LinkedInGuestSource
+from app.sources.remotar import RemotarSource
+from app.sources.workable import WorkableSource
 from app.state.seen_store import SeenStore
 from app.utils.watchdog import Watchdog
 
@@ -53,7 +56,13 @@ async def run(settings: Settings, profile: tuple[Resume, Contact]) -> None:
     async with httpx.AsyncClient() as client:
         assessor, tailor = _ai_services(client, settings, profile)
         watchdog = Watchdog(stall_after(settings.poll_interval_seconds))
-        sources: list[JobSource] = [LinkedInGuestSource(client), GupyPortalSource(client)]
+        sources: list[JobSource] = [
+            LinkedInGuestSource(client),
+            GupyPortalSource(client),
+            RemotarSource(client),
+            HimalayasSource(client),
+            WorkableSource(client),
+        ]
         watcher = Watcher(
             sources=sources,
             dispatcher=Dispatcher(build_channels(settings, client), copy="email"),
