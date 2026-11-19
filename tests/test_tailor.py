@@ -4,7 +4,10 @@ from datetime import date
 import httpx
 import pytest
 
+from app.schemas.job import Job
 from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
+from app.services.gupy_text import MAX_SKILLS, gupy_text
+from app.services.messages import job_message
 from app.services.resume_pdf import _latin1, render_pdf
 from app.services.tailor import (
     ResumeTailor,
@@ -185,3 +188,57 @@ async def test_a_pdf_that_fails_to_render_gives_no_file_instead_of_failing_the_c
         result = await ResumeTailor(chat, resume, contact).tailor(job(1), DETAILS)
 
     assert result is None
+
+
+def gupy_job() -> Job:
+    return Job(id="123", title="Pessoa de Dados", company="Acme", source="gupy", site="acme")
+
+
+def test_gupy_text_lists_every_project_as_an_experience_item(resume: Resume) -> None:
+    text = gupy_text(resume, tailored(resume), "Currículo para: Pessoa de Dados · Acme")
+    items = text.split("\n\n")
+
+    # The job, the two projects the PDF keeps (clima fixed, horta picked) and then the one it leaves out.
+    empresas = [block.splitlines()[0] for block in items if block.startswith("Empresa: ")]
+    assert empresas == [
+        "Empresa: Padaria Modelo",
+        "Empresa: Projeto próprio: Painel do Clima",
+        "Empresa: Projeto próprio: Diário da Horta",
+        "Empresa: Feira Livre Exemplo",
+    ]
+    assert "Início: Mar/2024\nFim: Atual" in text
+    freelance = next(block for block in items if block.startswith("Empresa: Feira Livre Exemplo"))
+    assert "Cargo: Engenheira de Dados (freelance)" in freelance
+    assert "Início: Jan/2025\nFim: Jun/2025" in freelance
+    assert "Projeto freelance: Mapa da Feira" in freelance
+    # A personal project without dates asks for them instead of passing for a current job.
+    assert "Início: (preencha" in next(block for block in items if "Painel do Clima" in block)
+    assert "Ana Exemplo" not in text
+
+
+def test_gupy_text_keeps_at_most_the_skills_the_field_takes(resume: Resume) -> None:
+    many = tailored(resume).model_copy(update={"habilidades": [f"S{n}" for n in range(40)]})
+
+    skills = gupy_text(resume, many, "x").rstrip("\n").rsplit("\n", 1)[1].split(", ")
+
+    assert skills == [f"S{n}" for n in range(MAX_SKILLS)]
+
+
+async def test_only_a_gupy_job_gets_the_text_to_paste(resume: Resume, contact: Contact) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = choice().model_dump_json()
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
+        tailor = ResumeTailor(chat, resume, contact, today=lambda: TODAY)
+        linkedin = await tailor.tailor(job(1), DETAILS)
+        gupy = await tailor.tailor(gupy_job(), DETAILS)
+
+    assert linkedin is not None and linkedin.paste is None
+    assert gupy is not None and gupy.paste is not None
+    assert gupy.paste.filename == "Gupy-Acme.txt" and gupy.paste.media_type == "text/plain"
+    assert gupy.paste.content.decode().startswith("Currículo para: Pessoa de Dados · Acme")
+    message = job_message([gupy_job()], tailored={gupy_job().key: gupy})
+    assert [a.filename for a in message.attachments] == ["Curriculo-Acme.pdf", "Gupy-Acme.txt"]
+    assert "Texto para colar na Gupy em anexo: Gupy-Acme.txt" in message.text

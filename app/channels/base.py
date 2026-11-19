@@ -9,6 +9,7 @@ class Attachment:
     filename: str
     content: bytes
     label: str = ""  # what the file is for (the job title), shown next to it where the channel allows
+    media_type: str = "application/pdf"
 
 
 @dataclass(frozen=True)

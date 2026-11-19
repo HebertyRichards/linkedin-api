@@ -44,7 +44,8 @@ app/
   channels/                # Notifier protocol + email (Resend) + whatsapp (Evolution) + telegram (Bot API)
   services/                # watcher (the cycle), dispatcher (primary -> fallback), messages (text),
                            # llm (chat client, one breaker per model), assessor (job score),
-                           # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render)
+                           # tailor (resume for jobs scored 50+), resume_pdf (fpdf2 render),
+                           # gupy_text (the same resume as text for Gupy's typed fields)
   state/seen_store.py      # seen job keys + baselines; memory or STATE_FILE
   utils/                   # circuit_breaker, retry, mask, watchdog (exit 1 on a stalled loop),
                            # search_query (NOT terms and OR alternatives of a search), html_text

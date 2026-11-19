@@ -118,6 +118,23 @@ Webhook ou WebSocket só voltam ao escopo se:
 - **MCP, descartado:** o comando `/vagas` do Telegram (D7) já cobre "consultar vagas com nota", e um MCP
   remoto no Railway seria uma porta aberta num projeto que hoje não abre nenhuma (seção 5).
 
+
+### 1.6 Como cada fonte recebe a candidatura (2026-11-19, sem LinkedIn)
+
+Amostras pedidas nesse dia, sem login, com o User-Agent do worker.
+
+| Fonte | Onde se candidata | O que pede |
+|---|---|---|
+| Gupy | perfil da Gupy, campos digitados | Experiência (empresa, cargo, início, fim ou atual, descrição) e Habilidades; **sem campo de projetos**; habilidades até 30 (dito pelo autor, não publicado). A IA da Gupy ordena só por Experiência ("histórico profissional e acadêmico") e Habilidades, e não lê "informações fora dos campos estruturados" [V, blog da Gupy]. O PDF é lido por um parser que a própria Gupy diz não ser 100% [V]. Teste online em 16 de 33 vagas [V, `jobSteps`]. Critério eliminatório vem das respostas de "Dados adicionais", não da IA [V]. |
+| Workable | formulário do próprio Workable | arquivo de currículo obrigatório em 17 de 20; experiência, formação e resumo opcionais (o parser preenche); perguntas da empresa (sim/não, texto) em 17 de 20 [V, `jobs.workable.com/api/v1/jobs/<código>/form`] |
+| Remotar | outro sistema, sempre (`isExternalLink` em 50 de 50) | InHire 32 (PDF/DOCX, LinkedIn, pretensão salarial, questionário da empresa [V, código da página]), Gupy 10 (já puladas), Sólides 3, recrut.ai 2, Recrutei 1, Ashby 1, LinkedIn 1 [I: estes pedem arquivo] |
+| Himalayas | ATS da empresa [I] | não visto: a página da vaga tem verificação da Cloudflare |
+
+**Consequência:** o PDF serve para todas, menos a Gupy. Na Gupy, quem não tem emprego formal só prova
+experiência com freelance ou projeto **cadastrado como item de Experiência**. Se a IA soma esse tempo como
+anos de experiência não é público [I]; não há como validar de fora (a Gupy não mostra a posição na lista).
+Ver D10.
+
 ---
 
 ## 2. Decisões (tomadas: B, Python, memória com `STATE_FILE` opcional)
@@ -272,7 +289,7 @@ ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe s
   funcionalidades full-stack para plataforma de trading" num currículo sem trading, o que passa a sensação de
   mentira. Palavra comum vinda da descrição ("verificação empírica") não é barrada no código: dependeria de
   comparar texto livre e jogaria fora quase todo resumo ajustado.
-- **Projeto fixo** (`fixo: true`) entra sempre; a IA escolhe mais um.
+- **Projeto fixo** (`fixo: true`) entra sempre; a IA escolhe mais um. Na Gupy, todos entram (D10).
 - **Modelo maior para isso** (`LLM_TAILOR_MODEL`, padrão `gpt-oss-120b`): a Groq limita cada modelo à
   parte, então ajustar currículo não gasta a cota da nota. São poucas vagas por dia.
 - **PDF com fpdf2**, uma coluna e fonte embutida (leitura boa em ATS). WeasyPrint foi descartado: precisa
@@ -429,6 +446,22 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
   título e empresa); no Remotar, as vagas que vêm da Gupy são puladas. A página da vaga no Himalayas tem
   verificação da Cloudflare (abre no navegador, não em script). O Workable ordena por relevância, então só
   a página 1 do último dia é lida. Mais fontes gastam mais notas da cota grátis do Groq.
+
+
+### D10. Texto para colar na Gupy, com projetos como experiência (2026-11-19, pedido do autor)
+
+- **O quê:** vaga da Gupy com nota 50+ leva, além do PDF, o anexo `Gupy-<empresa>.txt` (email e Telegram;
+  o WhatsApp só tem texto). Cada bloco é um item de Experiência pronto para digitar: empresa, cargo, início,
+  fim ou atual e descrição. No fim, as 30 primeiras habilidades, na ordem da vaga (`app/services/gupy_text.py`).
+- **Todos os projetos entram** (escolha do autor), não só os do PDF: cada um é mais prova no campo que a
+  ordenação lê, e o perfil da Gupy é um só. Os que o PDF manteve vêm primeiro.
+- **Rótulo honesto:** freelance (`tipo: freelance`) tem a empresa do cliente (`cliente`, ou "Freelancer
+  (autônomo)") e o nome do projeto na descrição; projeto pessoal tem empresa "Projeto próprio: <nome>". Assim
+  nada passa por emprego que não foi.
+- **Datas:** projeto ganhou `inicio` e `fim` opcionais (`AAAA-MM`). Sem `inicio`, o texto pede para preencher em
+  vez de inventar; sem `fim`, é atual. `cargo` é opcional (padrão: o `titulo` do currículo).
+- **Descartado:** projetos no "Apresente-se" (até 1.500 caracteres por vaga, segundo a Gupy): campo livre,
+  fora da ordenação.
 
 ---
 

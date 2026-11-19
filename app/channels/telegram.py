@@ -94,7 +94,7 @@ class TelegramNotifier:
                 await self._call(
                     "sendDocument",
                     {"chat_id": self._chat_id, "caption": attachment.label[:MAX_CAPTION]},
-                    {"document": (attachment.filename, attachment.content, "application/pdf")},
+                    {"document": (attachment.filename, attachment.content, attachment.media_type)},
                 )
         except (ChannelRejectedError, ChannelUnavailableError):
             self._breaker.record_success()  # Telegram answered: the refusal or the wait is not an outage

@@ -1,5 +1,6 @@
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -30,6 +31,13 @@ class Project(_Model):
     id: str
     nome: str
     fixo: bool = False
+    # Gupy has no projects field and its ranking reads only Experiência and Habilidades, so the Gupy text lists
+    # each project as an experience item: these fill its Empresa, Cargo and period.
+    tipo: Literal["pessoal", "freelance"] = "pessoal"
+    cliente: str = ""
+    cargo: str = ""
+    inicio: str | None = None
+    fim: str | None = None
     tecnologias: list[str] = []
     destaques: list[Highlight]
 

@@ -43,7 +43,7 @@ def _latin1(text: str) -> str:
     return plain.encode("latin-1", "replace").decode("latin-1")
 
 
-def _month(value: str | None) -> str:
+def month_label(value: str | None) -> str:
     if not value:
         return "Atual"
     year, _, month = value.partition("-")
@@ -91,7 +91,7 @@ def render_pdf(
 
     pdf.heading("Experiência")
     for job in resume.experiencias:
-        pdf.line_text(f"{job.empresa} - {job.cargo} | {_month(job.inicio)} - {_month(job.fim)}", style="B")
+        pdf.line_text(f"{job.empresa} - {job.cargo} | {month_label(job.inicio)} - {month_label(job.fim)}", style="B")
         if job.tecnologias:
             pdf.line_text(f"Tecnologias: {', '.join(job.tecnologias)}", style="I", size=9, height=4.5)
         for item in job.destaques:

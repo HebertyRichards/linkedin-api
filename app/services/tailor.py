@@ -13,6 +13,7 @@ from app.channels.base import Attachment
 from app.schemas.job import Job, JobDetails
 from app.schemas.resume import Contact, Highlight, Resume, TailoredResume
 from app.services.assessor import job_text
+from app.services.gupy_text import gupy_text
 from app.services.llm import ChatModel
 from app.services.resume_pdf import render_pdf
 
@@ -76,6 +77,11 @@ class TailorChoice(BaseModel):
 class TailoredFile:
     resume: TailoredResume
     attachment: Attachment
+    paste: Attachment | None = None  # Gupy jobs only: the text to type into its form fields
+
+    @property
+    def files(self) -> tuple[Attachment, ...]:
+        return (self.attachment,) if self.paste is None else (self.attachment, self.paste)
 
 
 def _today() -> date:
@@ -169,10 +175,10 @@ def build_tailored(
     )
 
 
-def _filename(job: Job) -> str:
+def _filename(job: Job, prefix: str = "Curriculo", extension: str = "pdf") -> str:
     plain = unicodedata.normalize("NFKD", job.company or job.title).encode("ascii", "ignore").decode()
     slug = "-".join(re.findall(r"[A-Za-z0-9]+", plain))[:40] or "vaga"
-    return f"Curriculo-{slug}.pdf"
+    return f"{prefix}-{slug}.{extension}"
 
 
 def _label(job: Job) -> str:
@@ -216,12 +222,22 @@ class ResumeTailor:
             pdf = await asyncio.to_thread(
                 render_pdf, self._contact, self._resume.titulo, tailored, self._resume.formacao, self._resume.idiomas
             )
+            paste = (
+                Attachment(
+                    filename=_filename(job, "Gupy", "txt"),
+                    content=gupy_text(self._resume, tailored, _label(job)).encode(),
+                    label=f"Texto para colar na Gupy: {job.title}",
+                    media_type="text/plain",
+                )
+                if job.source == "gupy"
+                else None
+            )
         except Exception:
             # A render bug must not fail the cycle: the job would be retried, and fail, every cycle.
             logger.exception("Tailored PDF of %s could not be rendered", job.key)
             return None
         attachment = Attachment(filename=_filename(job), content=pdf, label=_label(job))
-        result = TailoredFile(resume=tailored, attachment=attachment)
+        result = TailoredFile(resume=tailored, attachment=attachment, paste=paste)
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = result

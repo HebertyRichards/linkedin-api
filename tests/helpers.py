@@ -108,6 +108,10 @@ projetos:
     destaques: [{id: clima-api, texto: Coleta de dados meteorológicos.}]
   - id: feira
     nome: Mapa da Feira
+    tipo: freelance
+    cliente: Feira Livre Exemplo
+    inicio: 2025-01
+    fim: 2025-06
     tecnologias: [Go]
     destaques: [{id: feira-mapa, texto: Mapa das barracas da feira.}]
   - id: horta
