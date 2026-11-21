@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.schemas.job import JobDetails
-from app.schemas.resume import Resume, load_resume, parse_resume
+from app.schemas.resume import Resume, load_resume, parse_contact, parse_resume
 from app.services.assessor import JobAssessor, technologies, without_versions
 from tests.helpers import DETAILS, RESUME_YAML, build_chat, job
 
@@ -144,6 +144,12 @@ def test_broken_resume_names_the_problem_not_the_content(tmp_path: Path, caplog:
         load_resume(path)
     with pytest.raises(RuntimeError, match="RESUME_FILE could not be read"):
         load_resume(tmp_path / "missing.yaml")
+
+
+def test_the_example_resume_in_the_repo_is_valid() -> None:
+    text = (Path(__file__).parent.parent / "curriculo.example.yaml").read_text(encoding="utf-8")
+    assert parse_resume(text).titulo
+    assert parse_contact(text).nome
 
 
 def test_resume_from_a_variable_matches_the_file(tmp_path: Path, resume: Resume) -> None:

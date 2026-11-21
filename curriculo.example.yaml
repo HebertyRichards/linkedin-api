@@ -1,0 +1,71 @@
+# Example resume with made-up data. Copy it to curriculo.yaml (git-ignored) and replace the content:
+#     cp curriculo.example.yaml curriculo.yaml
+# Then set RESUME_FILE=curriculo.yaml in .env. Dates are "YYYY-MM" in quotes.
+
+# Printed on the PDF only. This block is never sent to the AI.
+contato:
+  nome: Ana Exemplo
+  telefone: "(00) 00000-0000"
+  email: ana@example.com
+  linkedin: https://www.linkedin.com/in/ana-exemplo
+  github: https://github.com/ana-exemplo
+  portfolio: ""
+  cidade: São Paulo, SP
+
+titulo: Desenvolvedora Full Stack
+idiomas: [Português (nativo), Inglês (B1)]
+perfil_busca:
+  niveis: [Júnior, Pleno]
+  modelos_trabalho: [Remoto, Híbrido]
+resumo: Desenvolvedora full stack com foco em APIs Python e interfaces React.
+
+experiencias:
+  - id: loja                       # any unique id: the AI picks highlights by id
+    empresa: Loja Exemplo Ltda
+    cargo: Desenvolvedora Júnior
+    inicio: "2024-03"
+    fim: null                      # null = current job
+    tecnologias: [Python, FastAPI, PostgreSQL, React]
+    destaques:
+      - id: loja-api
+        texto: API de pedidos em FastAPI usada pelo app e pelo site.
+        skills: [Python, FastAPI]
+      - id: loja-painel
+        texto: Painel de estoque em React com filtros e exportação.
+        skills: [React]
+
+projetos:
+  - id: agenda
+    nome: Agenda da Clínica
+    fixo: true                     # true = always on the PDF; the AI chooses among the others
+    tipo: freelance                # pessoal (default) or freelance
+    cliente: Clínica Exemplo       # freelance only; empty = "Freelancer (autônomo)" on the Gupy text
+    cargo: Desenvolvedora
+    inicio: "2025-01"
+    fim: "2025-04"
+    tecnologias: [Node.js, MySQL]
+    destaques:
+      - id: agenda-site
+        texto: Agendamento online com lembrete por WhatsApp.
+        skills: [Node.js]
+  - id: clima
+    nome: Painel do Clima
+    tecnologias: [Next.js, TypeScript]
+    destaques:
+      - id: clima-painel
+        texto: Painel com a previsão de várias cidades.
+        skills: [Next.js, TypeScript]
+
+formacao:
+  - curso: Análise e Desenvolvimento de Sistemas
+    instituicao: Faculdade Exemplo
+    periodo: 2022 - 2025
+    status: Concluído
+
+# Groups are free-form: the name is only a label.
+habilidades:
+  backend: [Python, FastAPI, Node.js]
+  frontend: [React, Next.js, TypeScript]
+  dados: [PostgreSQL, MySQL]
+# Enters the tailored resume only when the job asks for it.
+habilidades_sob_demanda: [Docker, Railway]

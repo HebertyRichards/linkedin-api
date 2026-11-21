@@ -26,3 +26,4 @@ Thumbs.db
 
 # Resume: personal data, never committed nor baked into the image.
 curriculo*.yaml
+!curriculo.example.yaml

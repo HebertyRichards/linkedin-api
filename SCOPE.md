@@ -177,7 +177,7 @@ processo, e põe a sua conta em risco.
 | Runtime | 3.13+ (igual ao whatsapp-automation) | Node 24 LTS | Java 25 |
 | HTTP | httpx 0.28.1, async | `fetch` nativo + `AbortSignal.timeout` | `java.net.http.HttpClient` |
 | Retry/backoff | loop próprio em `utils/retry.py` (as regras por canal não cabem bem no tenacity) | cockatiel 4.0.0 | Resilience4j 2.4.0 |
-| Circuit breaker | **copiar** `utils/circuit_breaker.py` (já existe nos seus 2 projetos) | cockatiel ou classe própria | Resilience4j |
+| Circuit breaker | **copiar** `utils/circuit_breaker.py` (já existe no whatsapp-automation) | cockatiel ou classe própria | Resilience4j |
 | Validação de env | pydantic-settings 2.16.1 + `SecretStr` | zod 4.6.7 | `record` + checagem, ou Spring Boot 4.1.x `@Validated` |
 | Resend | httpx direto | SDK `resend` 6.34.1 | `resend-java` 4.29.0 |
 | Evolution | **copiar** `evolution_service.py` do whatsapp-automation | wrapper próprio (~30 linhas) | wrapper próprio |

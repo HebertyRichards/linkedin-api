@@ -20,6 +20,17 @@ It does not apply for you and needs no database.
 > public API (documented). Any of them can change without notice, and the terms risk is the same kind. Every
 > source is read once per cycle (`POLL_INTERVAL_SECONDS`, 30 min by default), all of them at the same time.
 
+## Tech stack
+
+- **Python 3.13+**, `asyncio` (every source is one task in the same loop)
+- **httpx**: every HTTP call (job sources, AI, Resend, Evolution, Telegram), with timeouts and retries
+- **Pydantic** and **pydantic-settings**: the job and resume models, and the `.env` validated at boot
+- **PyYAML**: reads the resume
+- **fpdf2**: the tailored resume PDF
+- **AI**: any OpenAI-compatible chat API (Groq's free tier by default, with structured JSON output)
+- **Tooling**: pytest + pytest-asyncio, mypy (strict), ruff, gitleaks (pre-commit and CI), uv (lockfile)
+- **Run**: Docker image (non-root), deployed on Railway by GitHub Actions; or any machine with Python
+
 ## How it works
 
 ```
@@ -155,13 +166,76 @@ message from `TELEGRAM_CHAT_ID` counts; any other chat is ignored. In a group, e
 overlap) get a 409 for a moment; the worker waits 30 s and reads again. If the token leaks, send `/revoke` to
 @BotFather and set the new one.
 
-## Running locally
+## The resume
+
+Every score and every tailored PDF comes from one YAML resume. Start from
+[`curriculo.example.yaml`](curriculo.example.yaml), made-up data with every field. The `contato` block is
+printed on the PDF only and never sent to the AI. A broken resume stops the boot with the name of the
+field, never its content.
+
+There are three ways to hand it to the worker. Use exactly one: setting `RESUME_FILE` and `RESUME_YAML`
+together stops the boot.
+
+| Way | What to set | Best for |
+|---|---|---|
+| **File** | `RESUME_FILE=curriculo.yaml`, the file next to `.env` (`curriculo*.yaml` is git-ignored) | Running with Python on your machine |
+| **Variable** | `RESUME_YAML` holding the whole YAML, multi-line | Railway or any host with no file of yours: Variables → New Variable, paste the file. To update it, edit the variable and redeploy |
+| **File mounted in Docker** | the file mounted read-only, plus `RESUME_FILE` pointing at it | Running the Docker image locally. The image never contains a resume (`.dockerignore`) |
+
+Docker, from the repo folder:
 
 ```bash
-make install          # venv + dependencies
-cp .env.example .env  # fill in the values
-make run
+docker build -t linkedin-api .
+docker run --env-file .env -e RESUME_FILE=/app/curriculo.yaml \
+  -v "$PWD/curriculo.yaml:/app/curriculo.yaml:ro" linkedin-api
 ```
+
+`docker run --env-file` does not read multi-line values, so with Docker use the file, not `RESUME_YAML`.
+Locally the file is also simpler than `RESUME_YAML` in `.env`, because the YAML's own quotes would need
+escaping there.
+
+## Running locally
+
+Railway is optional: the worker runs on any machine with **Python 3.13 or newer** (`python --version`),
+for as long as the machine stays on. Every channel works locally: email and Telegram only call their
+APIs, and WhatsApp needs an Evolution server you run (Docker on `http://localhost` is accepted).
+
+The minimum `.env`: `JOB_KEYWORDS`, `JOB_LOCATION`, `LLM_API_KEY`, `RESUME_FILE` and **one** complete
+channel. Telegram is the quickest to set up (free, no domain). Add `STATE_FILE=seen.json` (git-ignored)
+so a restart does not forget the jobs already seen.
+
+1. Create your resume from the example, with your own data (other ways: [The resume](#the-resume)):
+
+   ```bash
+   cp curriculo.example.yaml curriculo.yaml
+   cp .env.example .env    # fill in the values, with RESUME_FILE=curriculo.yaml
+   ```
+
+   On Windows PowerShell use `copy` instead of `cp`.
+
+2. Install and run.
+
+   **Linux / macOS** (`make` is usually already there):
+
+   ```bash
+   make install    # venv + dependencies
+   make run
+   ```
+
+   **Windows with make.** Install GNU Make once (`winget install ezwinports.make` or
+   `choco install make`), open a new terminal, then the same `make install` and `make run`. The Makefile
+   picks `venv/Scripts/python.exe` on Windows by itself.
+
+   **Windows without make** (PowerShell):
+
+   ```powershell
+   python -m venv venv
+   venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+   venv\Scripts\python.exe -m app.main
+   ```
+
+   The other targets run the same way: `venv\Scripts\python.exe -m pytest -q` for `make test`
+   (see the [Makefile](Makefile) for each one).
 
 The first cycle takes the baseline, and alerts start with the next job that gets posted and scores 50 or
 more. The first digest runs 6 hours after the boot: every deploy restarts that clock. Stop with Ctrl+C.
@@ -179,10 +253,35 @@ more. The first digest runs 6 hours after the boot: every deploy restarts that c
      setting for writing to a volume.
    - A service with a volume runs a single replica and has a short pause on redeploy. That is fine
      here.
-4. **Optional:** deploy by tag.
-   - Turn off auto-deploy in Railway.
-   - Add the `RAILWAY_TOKEN` secret and the `RAILWAY_SERVICE` variable in GitHub.
-   - Push a `v*` tag (`.github/workflows/deploy.yml`).
+4. Pick how a new version goes live (below).
+
+### Auto-deploy or deploy by tag
+
+- **Auto-deploy (simplest).** Keep the repo connected in Railway: every push to `main` builds and goes
+  live. The CI runs on GitHub at the same time, but Railway does not wait for it, so a broken commit can
+  still go live.
+- **Deploy by tag (recommended).** Nothing goes live on a push. Pushing a `v*` tag runs
+  [`deploy.yml`](.github/workflows/deploy.yml), which deploys only when:
+  1. the full CI passes on the tagged commit (lint, types, tests and the gitleaks secret scan), and
+  2. the tag points to a commit already on `main`.
+
+  Setup, once:
+  1. In Railway, create a **Project Token** for the production environment (Project Settings → Tokens).
+  2. In GitHub (Settings → Secrets and variables → Actions), add the secret `RAILWAY_TOKEN` with that
+     token and the variable `RAILWAY_SERVICE` with the service name.
+  3. In Railway, disconnect the repo from the service (Service → Settings → Source), or every push to
+     `main` still deploys on its own.
+
+  Each release:
+
+  ```bash
+  git tag v0.2.0
+  git push origin v0.2.0
+  ```
+
+  A failed check stops the workflow before the deploy, and the version running keeps running. To roll
+  back, redeploy the previous build in Railway → Deployments, or open the older tag's run in GitHub →
+  Actions and click **Re-run all jobs**.
 
 ## Failure handling
 
