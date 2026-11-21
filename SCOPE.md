@@ -578,7 +578,7 @@ Aqui o rate limit é **de saída**: não existe API de entrada para limitar.
    - Apify: header `Authorization`, nunca `?token=`.
 4. **Log limpo.**
    - Nunca logar headers, request ou corpo.
-   - Mascarar email e telefone (`h***@gmail.com`, `5511*****9999`).
+   - Mascarar email e telefone (`m***@example.com`, `5511*****9999`).
    - Logger do `httpx` em WARNING, porque em INFO ele loga a URL de cada request.
 5. **Menor privilégio.**
    - Chave do Resend com permissão "Sending access" restrita ao domínio [I].
