@@ -5,7 +5,7 @@ labelled for what it is: a client's name for freelance work, "Projeto próprio" 
 from app.schemas.resume import Project, Resume, TailoredResume
 from app.services.resume_pdf import month_label
 
-# The skills field takes up to 30, as reported by the author (not published by Gupy).
+# The skills field takes up to 30, as seen on its form (not published by Gupy).
 MAX_SKILLS = 30
 _MISSING = "(preencha: o currículo não tem a data)"
 
@@ -33,11 +33,20 @@ def _project(project: Project, title: str) -> str:
     return _item(empresa, cargo, project.inicio, project.fim, lines)
 
 
-def gupy_text(resume: Resume, tailored: TailoredResume, label: str) -> str:
-    """Every project, not only the ones the PDF keeps: each one is more proof in the field the ranking reads.
-    The ones the tailoring kept come first, with their highlights in its order."""
-    kept = {project.id: project for project in tailored.projetos}
+def gupy_resume(resume: Resume, tailored: TailoredResume) -> TailoredResume:
+    """Only what Gupy's ranking reads: no summary (no field for it), the skills the field takes, and every project,
+    not only the ones the PDF keeps: each one is more proof in the field the ranking reads. The ones the tailoring
+    kept come first, with their highlights in its order."""
+    kept = {project.id for project in tailored.projetos}
     projects = [*tailored.projetos, *(p for p in resume.projetos if p.id not in kept)]
+    return tailored.model_copy(
+        update={"resumo": "", "projetos": projects, "habilidades": tailored.habilidades[:MAX_SKILLS]}
+    )
+
+
+def gupy_text(resume: Resume, tailored: TailoredResume, label: str) -> str:
+    tailored = gupy_resume(resume, tailored)
+    projects = tailored.projetos
     jobs = [
         _item(
             job.empresa,
@@ -56,6 +65,6 @@ def gupy_text(resume: Resume, tailored: TailoredResume, label: str) -> str:
         *jobs,
         *(_project(project, resume.titulo) for project in projects),
         f"HABILIDADES (as {MAX_SKILLS} primeiras, da mais ligada à vaga)",
-        ", ".join(tailored.habilidades[:MAX_SKILLS]),
+        ", ".join(tailored.habilidades),
     ]
     return "\n\n".join(blocks) + "\n"

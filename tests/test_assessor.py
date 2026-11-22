@@ -65,6 +65,23 @@ async def test_scores_a_job_without_sending_contact_data(resume: Resume) -> None
         assert contact not in prompt
 
 
+async def test_another_resume_is_scored_on_its_own_text_and_leaves_the_base_score_alone(resume: Resume) -> None:
+    prompts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        prompts.append(json.loads(request.content)["messages"][1]["content"])
+        return reply(GOOD)
+
+    other = resume.model_copy(update={"resumo": "Resumo ajustado para a vaga."})
+    assessor, client = assessor_for(handler, resume)
+    async with client:
+        result = await assessor.score_resume(job(1), DETAILS, other)
+
+    assert result is not None and result.score == 82
+    assert "Resumo: Resumo ajustado para a vaga." in prompts[0]
+    assert assessor.cached(job(1)) is None  # the base score is still to be given
+
+
 async def test_a_scored_job_is_not_sent_to_the_llm_again(resume: Resume) -> None:
     calls = 0
 

@@ -4,7 +4,7 @@ from datetime import date
 import httpx
 import pytest
 
-from app.schemas.job import Job
+from app.schemas.job import Assessment, Job, JobDetails
 from app.schemas.resume import Contact, Resume, TailoredResume, parse_contact, parse_resume
 from app.services.gupy_text import MAX_SKILLS, gupy_text
 from app.services.messages import job_message
@@ -17,7 +17,7 @@ from app.services.tailor import (
     build_tailored,
     safe_summary,
 )
-from tests.helpers import DETAILS, RESUME_YAML, build_chat, job
+from tests.helpers import DETAILS, RESUME_YAML, assessment, build_chat, job
 
 TODAY = date(2026, 11, 12)
 LLM = {"llm_api_key": "gsk_test_key", "resume_file": "curriculo.yaml"}
@@ -224,7 +224,7 @@ def test_gupy_text_keeps_at_most_the_skills_the_field_takes(resume: Resume) -> N
     assert skills == [f"S{n}" for n in range(MAX_SKILLS)]
 
 
-async def test_only_a_gupy_job_gets_the_text_to_paste(resume: Resume, contact: Contact) -> None:
+async def test_a_gupy_job_gets_only_the_text_to_paste_and_no_pdf(resume: Resume, contact: Contact) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         content = choice().model_dump_json()
         return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
@@ -235,10 +235,59 @@ async def test_only_a_gupy_job_gets_the_text_to_paste(resume: Resume, contact: C
         linkedin = await tailor.tailor(job(1), DETAILS)
         gupy = await tailor.tailor(gupy_job(), DETAILS)
 
-    assert linkedin is not None and linkedin.paste is None
-    assert gupy is not None and gupy.paste is not None
-    assert gupy.paste.filename == "Gupy-Acme.txt" and gupy.paste.media_type == "text/plain"
-    assert gupy.paste.content.decode().startswith("Currículo para: Pessoa de Dados · Acme")
+    assert linkedin is not None and linkedin.attachment.media_type == "application/pdf"
+    assert gupy is not None
+    assert gupy.attachment.filename == "Gupy-Acme.txt" and gupy.attachment.media_type == "text/plain"
+    assert gupy.attachment.content.decode().startswith("Currículo para: Pessoa de Dados · Acme")
+    # What Gupy reads: every project, no summary (it has no field for one).
+    assert [p.id for p in gupy.resume.projetos] == ["clima", "horta", "feira"] and gupy.resume.resumo == ""
     message = job_message([gupy_job()], tailored={gupy_job().key: gupy})
-    assert [a.filename for a in message.attachments] == ["Curriculo-Acme.pdf", "Gupy-Acme.txt"]
+    assert [a.filename for a in message.attachments] == ["Gupy-Acme.txt"]
     assert "Texto para colar na Gupy em anexo: Gupy-Acme.txt" in message.text
+    assert "Currículo ajustado" not in message.text and "Resumo:" not in message.text
+
+
+async def test_the_tailored_resume_gets_its_own_score_shown_next_to_the_base_one(
+    resume: Resume, contact: Contact
+) -> None:
+    seen: list[Resume] = []
+
+    async def score(job: Job, details: JobDetails, scored: Resume) -> Assessment | None:
+        seen.append(scored)
+        return assessment(68)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = choice(habilidades=["Kafka"]).model_dump_json()
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
+        tailor = ResumeTailor(chat, resume, contact, today=lambda: TODAY, score=score)
+        result = await tailor.tailor(job(1), DETAILS)
+        again = await tailor.tailor(job(1), DETAILS)
+
+    assert result is not None and result.score == 68
+    assert again is result and len(seen) == 1  # a retry costs no second score
+    # Scored on what the PDF holds: the picked projects and the tailored skills, the chosen one first.
+    assert [p.id for p in seen[0].projetos] == ["clima", "horta"]
+    assert seen[0].habilidades["ajustadas"][0] == "Kafka" and seen[0].habilidades_sob_demanda == []
+    message = job_message([job(1)], {job(1).key: assessment(55)}, {job(1).key: result})
+    assert "Nota 55/100" in message.text and "Nota com o currículo ajustado: 68/100" in message.text
+
+
+async def test_a_tailored_resume_left_unscored_still_goes_without_the_second_score(
+    resume: Resume, contact: Contact
+) -> None:
+    async def down(job: Job, details: JobDetails, scored: Resume) -> Assessment | None:
+        return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = choice().model_dump_json()
+        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
+        result = await ResumeTailor(chat, resume, contact, today=lambda: TODAY, score=down).tailor(job(1), DETAILS)
+
+    assert result is not None and result.score is None
+    assert "ajustado:" not in job_message([job(1)], tailored={job(1).key: result}).text

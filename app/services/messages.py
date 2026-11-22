@@ -34,17 +34,20 @@ def _score_lines(assessment: Assessment | None) -> list[str]:
 
 
 def _resume_lines(tailored: TailoredFile | None, assessment: Assessment | None = None) -> list[str]:
-    """A preview of what the tailored resume leads with; the full one is the attached PDF."""
+    """A preview of what the tailored resume leads with; the full one is the attached file (a Gupy job: the text
+    to paste into its form, no PDF)."""
     if tailored is None:
         due = assessment is not None and assessment.score >= MIN_SCORE and assessment.workplace != "onsite"
         return [RESUME_DOWN] if due else []
     resume = tailored.resume
     top = [item.texto for job in resume.experiencias for item in job.destaques][:3]
-    paste = [f"Texto para colar na Gupy em anexo: {tailored.paste.filename}"] if tailored.paste else []
+    gupy = tailored.attachment.media_type == "text/plain"
+    kind, held = ("Texto para colar na Gupy", "texto") if gupy else ("Currículo ajustado", "currículo")
+    score = [] if tailored.score is None else [f"Nota com o {held} ajustado: {tailored.score}/100"]
     return [
-        f"Currículo ajustado em anexo: {tailored.attachment.filename}",
-        *paste,
-        f"Resumo: {clip(resume.resumo, 220)}",
+        f"{kind} em anexo: {tailored.attachment.filename}",
+        *score,
+        *([f"Resumo: {clip(resume.resumo, 220)}"] if resume.resumo else []),
         "Destaques: " + "; ".join(clip(text, 90) for text in top),
         "Projetos: " + " + ".join(project.nome for project in resume.projetos),
     ]
@@ -136,7 +139,7 @@ def job_message(
         for job in jobs
     ]
     text = f"*{heading}*\n\n" + "\n\n".join(text_items)
-    attachments = tuple(file for job in jobs if job.key in files for file in files[job.key].files)
+    attachments = tuple(files[job.key].attachment for job in jobs if job.key in files)
     # Body and files are part of the key: a new score for the same jobs is a new message, never a 409 from Resend.
     fingerprint = hashlib.sha256((",".join(sorted(keys)) + text).encode())
     for attachment in attachments:

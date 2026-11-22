@@ -33,14 +33,14 @@ run:
 	$(PY) -m app.main
 
 lint:
-	$(PY) -m ruff check app/ tests/
-	$(PY) -m ruff format --check app/ tests/
+	$(PY) -m ruff check app/ tests/ scripts/
+	$(PY) -m ruff format --check app/ tests/ scripts/
 
 format:
 	$(PY) -m ruff format app/ tests/
 
 typecheck:
-	$(PY) -m mypy app/ tests/
+	$(PY) -m mypy app/ tests/ scripts/
 
 test:
 	$(PY) -m pytest -q

@@ -101,7 +101,7 @@ Webhook ou WebSocket só voltam ao escopo se:
   `__NEXT_DATA__` embutido: a página 1 tem as 12 mais novas, da mais nova para a mais antiga, já com a
   descrição (a nota não precisa de uma segunda requisição). A busca não entende OR, NOT nem aspas. Respondeu
   sem login, sem cookie e com o mesmo User-Agent do LinkedIn. Risco de termos: endpoint não oficial, do
-  mesmo tipo da busca guest do LinkedIn; o autor aceitou.
+  mesmo tipo da busca guest do LinkedIn, aceito no projeto.
 - **Descartadas:**
   - Indeed: a Publisher API foi aposentada; as APIs que restam só mandam vagas *para* o Indeed [V].
   - Glassdoor: API fechada em 2021/2022 [V].
@@ -125,7 +125,7 @@ Amostras pedidas nesse dia, sem login, com o User-Agent do worker.
 
 | Fonte | Onde se candidata | O que pede |
 |---|---|---|
-| Gupy | perfil da Gupy, campos digitados | Experiência (empresa, cargo, início, fim ou atual, descrição) e Habilidades; **sem campo de projetos**; habilidades até 30 (dito pelo autor, não publicado). A IA da Gupy ordena só por Experiência ("histórico profissional e acadêmico") e Habilidades, e não lê "informações fora dos campos estruturados" [V, blog da Gupy]. O PDF é lido por um parser que a própria Gupy diz não ser 100% [V]. Teste online em 16 de 33 vagas [V, `jobSteps`]. Critério eliminatório vem das respostas de "Dados adicionais", não da IA [V]. |
+| Gupy | perfil da Gupy, campos digitados | Experiência (empresa, cargo, início, fim ou atual, descrição) e Habilidades; **sem campo de projetos**; habilidades até 30 (visto no formulário, não publicado pela Gupy). A IA da Gupy ordena só por Experiência ("histórico profissional e acadêmico") e Habilidades, e não lê "informações fora dos campos estruturados" [V, blog da Gupy]. O PDF é lido por um parser que a própria Gupy diz não ser 100% [V]. Teste online em 16 de 33 vagas [V, `jobSteps`]. Critério eliminatório vem das respostas de "Dados adicionais", não da IA [V]. |
 | Workable | formulário do próprio Workable | arquivo de currículo obrigatório em 17 de 20; experiência, formação e resumo opcionais (o parser preenche); perguntas da empresa (sim/não, texto) em 17 de 20 [V, `jobs.workable.com/api/v1/jobs/<código>/form`] |
 | Remotar | outro sistema, sempre (`isExternalLink` em 50 de 50) | InHire 32 (PDF/DOCX, LinkedIn, pretensão salarial, questionário da empresa [V, código da página]), Gupy 10 (já puladas), Sólides 3, recrut.ai 2, Recrutei 1, Ashby 1, LinkedIn 1 [I: estes pedem arquivo] |
 | Himalayas | ATS da empresa [I] | não visto: a página da vaga tem verificação da Cloudflare |
@@ -255,18 +255,18 @@ descartada. A candidatura continua manual: o worker não se candidata (ver 1.2 e
   MySQL 8 tirou 20 contra um currículo com Java 11; só a regra no prompt levou a 30; tirando a versão, 90. Faixa de anos ("3 a 5 anos", "2-3 anos") e número que faz parte do nome
   ("S3") nunca são cortados.
 - **Tecnologia parecida baixa menos que uma que falta** (MySQL para PostgreSQL, Vitest para Jest): regra no
-  prompt, a pedido do autor (quem conhece uma se adapta à outra). Não medida isoladamente.
+  prompt (quem conhece uma se adapta à outra). Não medida isoladamente.
 - **"Ou" é alternativa, "e" é soma (2026-11-15):** "Vue.js ou React" se atende com uma das duas, e a outra
   não é lacuna; "Vue.js e React" pede as duas. Item desejável (diferencial, plus) baixa bem menos que um
-  requisito. Regras no prompt, a pedido do autor: numa vaga de trampos.co a IA listava Vue como falta com
+  requisito. Regras no prompt: numa vaga de trampos.co a IA listava Vue como falta com
   "Vue ou React" na vaga e React no currículo.
 - **Faixa de nível com pleno não é sênior (2026-11-15):** "pleno a sênior", "pleno avançado a sênior" e o
-  "Mid-Senior level" do LinkedIn não levam o limite de 40 de vaga sênior, a pedido do autor. Medido antes
+  "Mid-Senior level" do LinkedIn não levam o limite de 40 de vaga sênior. Medido antes
   da regra: a mesma vaga "pleno avançado a sênior" tirou 35, 65 e 70 (às vezes a IA aplicava o limite, às
   vezes não), atravessando o corte de 50.
 - **Inglês obrigatório acima do currículo limita a nota a 50 (2026-11-18):** a IA responde também se a vaga
   exige inglês acima do nível de "Idiomas" como requisito (não como diferencial). Se sim, o código limita a
-  nota a 50, a pedido do autor: a vaga que bate em todo o resto ainda sai (recrutador aborda essas também), e
+  nota a 50: a vaga que bate em todo o resto ainda sai (recrutador aborda essas também), e
   qualquer outra lacuna a derruba. Vaga escrita em inglês que não pede inglês não conta. Visto antes: uma vaga
   pedindo "Professional working English" passou do corte contra um currículo A2, porque a regra do prompt só
   baixava a nota.
@@ -297,6 +297,10 @@ ajustado à vaga em PDF, com uma prévia no card. Só email (o WhatsApp recebe s
   fonte embutida só tem Latin-1, então travessão, reticências e aspas curvas viram ASCII, e qualquer traço
   ou espaço Unicode vira `-` ou espaço (o hífen que não quebra linha saía como "full?stack").
 - O PDF tem data de criação fixa: o mesmo currículo dá os mesmos bytes e a mesma chave de idempotência.
+- **Nota do currículo ajustado (2026-11-22):** a nota que decide o envio (50+) é contra o currículo base.
+  Depois do ajuste, o mesmo modelo dá uma segunda nota ao que vai no anexo, e a mensagem mostra as duas. Custo:
+  uma chamada de IA a mais por vaga 50+. O ajuste só reordena o que o currículo tem, então uma diferença grande
+  entre as duas é ruído da IA.
 
 ### D5. Canal Telegram (2026-11-13)
 
@@ -314,12 +318,12 @@ o PDF do currículo ajustado chegam numa conversa com um robô seu.
 **Decisões:**
 
 - **Só envio, sem webhook e sem porta.** Webhook e `getUpdates` são os dois jeitos de *receber* mensagens
-  [V]; o worker não recebe nada. O `chat_id` sai de uma chamada única a `getUpdates`, feita pelo autor no
+  [V]; o worker não recebe nada. O `chat_id` sai de uma chamada única a `getUpdates`, feita por quem usa no
   navegador (passo no README), não pelo código.
-- **O robô só fala com quem falou com ele antes** [I]: o autor manda `/start` para o robô uma vez.
+- **O robô só fala com quem falou com ele antes** [I]: quem usa manda `/start` para o robô uma vez.
 - **`TELEGRAM_CHAT_ID` só numérico** (conversa privada positiva, grupo negativo). Nome de canal
-  (`@canal`) é recusado no boot: o aviso tem dados da busca e vai só para o autor.
-- **WhatsApp continua.** O Telegram é um canal a mais; desligar a Evolution é decisão separada do autor
+  (`@canal`) é recusado no boot: o aviso tem dados da busca e vai só para quem configurou o worker.
+- **WhatsApp continua.** O Telegram é um canal a mais; desligar a Evolution é uma decisão separada
   (economiza o serviço no Railway). `NOTIFY_PRIMARY` passa a aceitar `telegram`; o padrão continua
   `whatsapp` para não mudar a ordem de quem já está no ar. Ordem: o principal, depois email, WhatsApp,
   Telegram.
@@ -332,7 +336,7 @@ o PDF do currículo ajustado chegam numa conversa com um robô seu.
 - **PDF depois do texto**, um `sendDocument` por arquivo, com o título da vaga na legenda (até 1024
   caracteres [V]) e 1 s entre os envios. `sendMediaGroup` foi descartado: pede no mínimo 2 arquivos, então
   seriam dois caminhos de código para o mesmo resultado.
-- **Falha no meio do envio: não perder vaga nem currículo** (pedido do autor, 2026-11-13). Qualquer parte que
+- **Falha no meio do envio: não perder vaga nem currículo** (2026-11-13). Qualquer parte que
   falhe (um bloco de texto ou um PDF) faz o aviso inteiro falhar: o próximo canal manda tudo, e sem nenhum
   canal o próximo ciclo tenta de novo. O custo: parte do aviso pode chegar repetida no Telegram, que não tem
   chave de idempotência.
@@ -350,7 +354,7 @@ o PDF do currículo ajustado chegam numa conversa com um robô seu.
     Se vazar: @BotFather → `/revoke`.
 - **Comandos:** ver D7. Continuam fora do escopo `/pausar`, botões e resposta a texto livre.
 
-### D6. Só vaga com nota 50 ou mais (2026-11-14, pedido do autor)
+### D6. Só vaga com nota 50 ou mais (2026-11-14)
 
 Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
 - **O ciclo de 30 min manda só nota 50 ou mais,** pelos três canais (email, WhatsApp, Telegram). Abaixo de
@@ -369,7 +373,7 @@ Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
 - **Custo de cota:** um resumo sem nenhuma vaga 50+ gasta até 50 notas; 4 resumos por dia, até 200 notas,
   fora o ciclo e os `/resumo`. O limite de 5 rodadas existe para a cota grátis durar o dia.
 
-### D7. Comandos no Telegram (2026-11-14, pedido do autor)
+### D7. Comandos no Telegram (2026-11-14)
 
 - **`/resumo`** roda o resumo na hora; **`/status`** (e `/start`) diz quando foi o último ciclo e quando sai
   o próximo resumo automático. As vagas saem pelos canais de sempre; o robô só responde um resumo em texto.
@@ -395,7 +399,7 @@ Muda a regra de negócio: antes, toda vaga nova saía, com ou sem nota.
 - **Custo:** duas instâncias lendo o mesmo robô (sobreposição no deploy) recebem 409 por um momento; o robô
   espera 30 s e lê de novo.
 
-### D8. Sem filtro Easy Apply; Gupy como segunda fonte (2026-11-17, pedido do autor)
+### D8. Sem filtro Easy Apply; Gupy como segunda fonte (2026-11-17)
 
 Muda a regra de negócio: antes, só vaga com Easy Apply (`f_AL=true`); agora, toda vaga da busca. O worker
 continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga termina com a fonte
@@ -404,7 +408,7 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
 - **Várias fontes:** `Watcher(sources=[...])`; o protocolo `JobSource` ganha `name`. (O `min_interval`, que
   fazia o ciclo ler a Gupy no máximo a cada 30 min, saiu em D9: todas as fontes seguem o mesmo relógio.)
 - **A mesma busca nas duas:** `JOB_KEYWORDS` segue a sintaxe do LinkedIn. Na Gupy, cada alternativa do OR
-  vira uma requisição (as 3 buscas do autor dão 12 por leitura), e os termos NOT são aplicados no título pelo
+  vira uma requisição (3 buscas com 4 alternativas cada dão 12 por leitura), e os termos NOT são aplicados no título pelo
   worker, como no LinkedIn (`utils/search_query.py`). `JOB_LOCATION` não vale para a Gupy, que só tem vagas no
   Brasil. Num teste, "Desenvolvedor Sr. Full Stack" e "Líder Técnico" passaram: o `.env.example` sugere
   `NOT sr NOT líder NOT lead`.
@@ -422,9 +426,9 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
 - **Saúde por fonte:** cada fonte tem o próprio relógio de falha e o próprio aviso ("A busca de vagas do
   LinkedIn/Gupy está falhando desde …"), uma vez por queda.
 - **Custo:** mais vagas por dia para a IA avaliar [I] e o risco de termos de uma segunda fonte não oficial,
-  aceito pelo autor.
+  aceito no projeto.
 
-### D9. Remotar, Himalayas e Workable; todas as fontes no mesmo relógio e em paralelo (2026-11-18, pedido do autor)
+### D9. Remotar, Himalayas e Workable; todas as fontes no mesmo relógio e em paralelo (2026-11-18)
 
 - **Novas fontes:** Remotar, Himalayas e Workable, todas sem chave, login nem cookie (pesquisa em 1.5). Cada
   uma segue o modelo da Gupy: breaker próprio (403/429 é bloqueio), só a página 1 de cada alternativa do OR,
@@ -435,25 +439,25 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
 - **Links:** montados do id, cujo formato é conferido por fonte (`remotar.com.br/job/<n>`,
   `himalayas.app/companies/<empresa>/jobs/<slug>`, `jobs.workable.com/view/<código>`).
 - **Mesmo relógio:** toda fonte é lida em todo ciclo (`POLL_INTERVAL_SECONDS`, 30 min por padrão), no resumo
-  e no `/vagas`. Com as 3 buscas do autor (4 alternativas cada), são 12 requisições por fonte por ciclo.
+  e no `/vagas`. Com 3 buscas de 4 alternativas cada, são 12 requisições por fonte por ciclo.
 - **Em paralelo:** o ciclo, o resumo e o `/vagas` leem as fontes ao mesmo tempo (`asyncio.gather`, uma
   tarefa por fonte; é um processo só, e a espera de rede de uma fonte não segura as outras). Dentro de uma
   fonte, as buscas seguem uma por vez e espaçadas, para não pesar no site.
 - **Fila intercalada:** o resumo e o `/vagas` montam a fila com uma vaga de cada busca de cada fonte por vez
   (1ª do LinkedIn, 1ª da Gupy, ..., depois as 2ªs). Em fila corrida, o LinkedIn (até 30 vagas por busca)
   enchia sozinho as 20 do `/vagas` e as primeiras rodadas do resumo.
-- **Limites aceitos:** a mesma vaga publicada em duas fontes chega duas vezes (o autor recusou deduplicar por
-  título e empresa); no Remotar, as vagas que vêm da Gupy são puladas. A página da vaga no Himalayas tem
+- **Limites aceitos:** a mesma vaga publicada em duas fontes chega duas vezes (deduplicar por
+  título e empresa foi descartado); no Remotar, as vagas que vêm da Gupy são puladas. A página da vaga no Himalayas tem
   verificação da Cloudflare (abre no navegador, não em script). O Workable ordena por relevância, então só
   a página 1 do último dia é lida. Mais fontes gastam mais notas da cota grátis do Groq.
 
 
-### D10. Texto para colar na Gupy, com projetos como experiência (2026-11-19, pedido do autor)
+### D10. Texto para colar na Gupy, com projetos como experiência (2026-11-19)
 
-- **O quê:** vaga da Gupy com nota 50+ leva, além do PDF, o anexo `Gupy-<empresa>.txt` (email e Telegram;
+- **O quê:** vaga da Gupy com nota 50+ leva só o anexo `Gupy-<empresa>.txt`, sem PDF (email e Telegram;
   o WhatsApp só tem texto). Cada bloco é um item de Experiência pronto para digitar: empresa, cargo, início,
   fim ou atual e descrição. No fim, as 30 primeiras habilidades, na ordem da vaga (`app/services/gupy_text.py`).
-- **Todos os projetos entram** (escolha do autor), não só os do PDF: cada um é mais prova no campo que a
+- **Todos os projetos entram**, não só os do PDF: cada um é mais prova no campo que a
   ordenação lê, e o perfil da Gupy é um só. Os que o PDF manteve vêm primeiro.
 - **Rótulo honesto:** freelance (`tipo: freelance`) tem a empresa do cliente (`cliente`, ou "Freelancer
   (autônomo)") e o nome do projeto na descrição; projeto pessoal tem empresa "Projeto próprio: <nome>". Assim
@@ -462,6 +466,8 @@ continua sem se candidatar. As mensagens dizem "Nova vaga", e cada linha de vaga
   vez de inventar; sem `fim`, é atual. `cargo` é opcional (padrão: o `titulo` do currículo).
 - **Descartado:** projetos no "Apresente-se" (até 1.500 caracteres por vaga, segundo a Gupy): campo livre,
   fora da ordenação.
+- **Sem PDF na Gupy (2026-11-22):** a candidatura na Gupy é pelos campos digitados, e a IA dela não lê o PDF.
+  Se o formulário pedir um arquivo, vale o currículo base.
 
 ---
 

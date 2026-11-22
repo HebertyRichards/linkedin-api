@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Protocol
@@ -10,16 +10,17 @@ from typing import Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from app.channels.base import Attachment
-from app.schemas.job import Job, JobDetails
+from app.schemas.job import Assessment, Job, JobDetails
 from app.schemas.resume import Contact, Highlight, Resume, TailoredResume
 from app.services.assessor import job_text
-from app.services.gupy_text import gupy_text
+from app.services.gupy_text import gupy_resume, gupy_text
 from app.services.llm import ChatModel
 from app.services.resume_pdf import render_pdf
 
 logger = logging.getLogger(__name__)
 
-# Only a job scored this or more goes out (any channel), with a resume tailored to it attached as a PDF.
+# Only a job scored this or more goes out (any channel), with a resume tailored to it attached as a PDF (a Gupy
+# job: as the text of its form fields).
 MIN_SCORE = 50
 _MAX_PER_EXPERIENCE = 6
 _MAX_SUMMARY = 600
@@ -75,13 +76,26 @@ class TailorChoice(BaseModel):
 
 @dataclass(frozen=True)
 class TailoredFile:
-    resume: TailoredResume
-    attachment: Attachment
-    paste: Attachment | None = None  # Gupy jobs only: the text to type into its form fields
+    resume: TailoredResume  # what the file holds (for Gupy: only what its ranking reads)
+    attachment: Attachment  # the PDF; for a Gupy job, the text to type into its form fields instead
+    score: int | None = None  # the job's score against this resume; None: not scored (LLM down)
 
-    @property
-    def files(self) -> tuple[Attachment, ...]:
-        return (self.attachment,) if self.paste is None else (self.attachment, self.paste)
+
+# The score of a job against another resume (JobAssessor.score_resume).
+ResumeScorer = Callable[[Job, JobDetails, Resume], Awaitable[Assessment | None]]
+
+
+def _as_resume(resume: Resume, tailored: TailoredResume) -> Resume:
+    """The base resume with the tailored pick and order, as the score's prompt reads a resume."""
+    return resume.model_copy(
+        update={
+            "resumo": tailored.resumo,
+            "experiencias": tailored.experiencias,
+            "projetos": tailored.projetos,
+            "habilidades": {"ajustadas": tailored.habilidades},
+            "habilidades_sob_demanda": [],
+        }
+    )
 
 
 def _today() -> date:
@@ -190,9 +204,16 @@ class ResumeTailor:
     without the attachment)."""
 
     def __init__(
-        self, chat: ChatModel, resume: Resume, contact: Contact, *, today: Callable[[], date] = _today
+        self,
+        chat: ChatModel,
+        resume: Resume,
+        contact: Contact,
+        *,
+        today: Callable[[], date] = _today,
+        score: ResumeScorer | None = None,
     ) -> None:
         self._chat = chat
+        self._score = score
         self._resume = resume
         self._contact = contact
         self._today = today
@@ -219,25 +240,28 @@ class ResumeTailor:
         known = self._resume.prompt_text(self._today())
         tailored = build_tailored(self._resume, choice, details.description, known, job.title)
         try:
-            pdf = await asyncio.to_thread(
-                render_pdf, self._contact, self._resume.titulo, tailored, self._resume.formacao, self._resume.idiomas
-            )
-            paste = (
-                Attachment(
+            # Gupy takes no file: its ranking reads only the typed fields, so the job gets their text, no PDF.
+            if job.source == "gupy":
+                tailored = gupy_resume(self._resume, tailored)
+                attachment = Attachment(
                     filename=_filename(job, "Gupy", "txt"),
                     content=gupy_text(self._resume, tailored, _label(job)).encode(),
                     label=f"Texto para colar na Gupy: {job.title}",
                     media_type="text/plain",
                 )
-                if job.source == "gupy"
-                else None
-            )
+            else:
+                base = self._resume
+                pdf = await asyncio.to_thread(
+                    render_pdf, self._contact, base.titulo, tailored, base.formacao, base.idiomas
+                )
+                attachment = Attachment(filename=_filename(job), content=pdf, label=_label(job))
         except Exception:
             # A render bug must not fail the cycle: the job would be retried, and fail, every cycle.
-            logger.exception("Tailored PDF of %s could not be rendered", job.key)
+            logger.exception("Tailored file of %s could not be rendered", job.key)
             return None
-        attachment = Attachment(filename=_filename(job), content=pdf, label=_label(job))
-        result = TailoredFile(resume=tailored, attachment=attachment, paste=paste)
+        # The job's score is against the base resume; this one tells what the file sent is worth for it.
+        scored = await self._score(job, details, _as_resume(self._resume, tailored)) if self._score else None
+        result = TailoredFile(resume=tailored, attachment=attachment, score=scored.score if scored else None)
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = result

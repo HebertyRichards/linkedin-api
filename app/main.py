@@ -119,7 +119,8 @@ def _ai_services(
 ) -> tuple[JobAssessor, ResumeTailor]:
     resume, contact = profile
     score, tailor = build_chats(client, settings)
-    return JobAssessor(score, resume), ResumeTailor(tailor, resume, contact)
+    assessor = JobAssessor(score, resume)
+    return assessor, ResumeTailor(tailor, resume, contact, score=assessor.score_resume)
 
 
 def main() -> None:

@@ -139,8 +139,18 @@ class JobAssessor:
         cached = self._cache.get(job.key)
         if cached is not None:
             return cached
-        resume = self._resume.prompt_text(self._today())
-        prompt = without_versions(f"CURRÍCULO:\n{resume}\n\nVAGA:\n{job_text(job, details)}", self._technologies)
+        assessment = await self.score_resume(job, details, self._resume)
+        if assessment is None:
+            return None
+        if len(self._cache) >= _CACHE_SIZE:
+            del self._cache[next(iter(self._cache))]
+        self._cache[job.key] = assessment
+        return assessment
+
+    async def score_resume(self, job: Job, details: JobDetails, resume: Resume) -> Assessment | None:
+        """The score against `resume`, uncached: the tailored resume gets its own, next to the base one's."""
+        text = resume.prompt_text(self._today())
+        prompt = without_versions(f"CURRÍCULO:\n{text}\n\nVAGA:\n{job_text(job, details)}", self._technologies)
         reply = await self._chat.complete(_SYSTEM_PROMPT, prompt, _RESPONSE_FORMAT)
         if reply is None:
             return None
@@ -156,9 +166,6 @@ class JobAssessor:
         if assessment.english_above_resume and assessment.score > ENGLISH_MAX_SCORE:
             logger.info("Score of %s capped at %d: the job requires more English", job.key, ENGLISH_MAX_SCORE)
             assessment = assessment.model_copy(update={"score": ENGLISH_MAX_SCORE})
-        if len(self._cache) >= _CACHE_SIZE:
-            del self._cache[next(iter(self._cache))]
-        self._cache[job.key] = assessment
         return assessment
 
 
