@@ -84,7 +84,7 @@ class RemotarSource(TermSearchSource):
         response = await self._get(SEARCH_URL.format(term=quote(term, safe="")), headers=JSON_HEADERS)
         return self._json_list(response, "data")
 
-    def _read(self, raw: object, now: datetime) -> Listed:
+    def _read(self, raw: object, now: datetime, location: str) -> Listed:
         item = _Item.model_validate(raw)
         text = html_to_text(item.description or "")
         return Listed(

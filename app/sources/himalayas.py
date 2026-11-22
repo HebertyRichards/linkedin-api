@@ -71,7 +71,7 @@ class HimalayasSource(TermSearchSource):
         response = await self._get(SEARCH_URL, params=params, headers=JSON_HEADERS)
         return self._json_list(response, "jobs")
 
-    def _read(self, raw: object, now: datetime) -> Listed:
+    def _read(self, raw: object, now: datetime, location: str) -> Listed:
         item = _Item.model_validate(raw)
         text = html_to_text(item.description or "")
         return Listed(item.job(), item.pub_date, bool(text), lambda: item.details(text, now))

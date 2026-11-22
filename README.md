@@ -9,7 +9,7 @@ must accept each alert; the others are the fallback.
 
 It does not apply for you and needs no database.
 
-> **Read this first.** LinkedIn has no official API for this (see [SCOPE.md](SCOPE.md), section 1).
+> **Read this first.** LinkedIn has no official API for this (see [ADR 0002](docs/adr/0002-busca-publica-do-linkedin-sem-login.md)).
 > The worker reads LinkedIn's public, logged-out job search. LinkedIn's User Agreement (§8.2) forbids
 > automated access, so the risk of blocking is yours. The worker keeps it low on purpose: one request per
 > search per cycle, no login, no cookies, and it backs off when LinkedIn answers 429. Never point it at a
@@ -90,7 +90,7 @@ error names the missing variables and never prints their values.
 | Variable | Required | Default | What it is |
 |---|---|---|---|
 | `JOB_KEYWORDS` | yes | — | Up to 3 searches, comma separated: `python, typescript`, in LinkedIn's syntax (`(a OR b) NOT senior`). Try each term in LinkedIn's search first: a term LinkedIn does not recognize is dropped, and the search returns jobs from any field. The other sources get the same value: each OR alternative is its own request, quotes are dropped, and NOT terms are applied to the title by the worker |
-| `JOB_LOCATION` | yes | — | **English** name as LinkedIn spells it: `Brazil`, `São Paulo`. `Brasil` is ignored by LinkedIn and returns US jobs. The other sources ignore it: Gupy, Remotar, Himalayas and Workable are fixed on Brazil |
+| `JOB_LOCATION` | yes | — | **English** name as LinkedIn spells it: `Brazil`, `São Paulo`. `Brasil` is ignored by LinkedIn and returns US jobs. Gupy keeps only the jobs whose city, state or country it names (Gupy has jobs abroad too). Remotar, Himalayas and Workable ignore it: they are fixed on Brazil |
 | `RESEND_API_KEY` | email | — | Resend API key |
 | `EMAIL_TO` | email | — | Who gets the email |
 | `EMAIL_FROM` | no | `onboarding@resend.dev` | Sender |
@@ -304,7 +304,7 @@ complete: a part repeated on Telegram is better than a job or a resume lost.
 ## Security
 
 - **No one can call this project:** it opens no port and has no route. Every call goes out (the job sources,
-  Groq, Resend, Evolution, Telegram), so the real entry points are the API keys in Railway Variables. See SCOPE.md 5.
+  Groq, Resend, Evolution, Telegram), so the real entry points are the API keys in Railway Variables. See [ADR 0009](docs/adr/0009-sem-porta-de-entrada-e-watchdog-no-lugar-de-health.md).
 - **Health:** a watchdog thread exits with code 1 when the loop stops for 2 h (30 min poll), and Railway's
   On Failure restart policy brings it back. No `/health` endpoint: Railway checks it only at deploy time.
 
@@ -324,7 +324,7 @@ complete: a part repeated on Telegram is better than a job or a resume lost.
 - **Secret scanning:** gitleaks runs in CI (`.github/workflows/ci.yml`) and as a pre-commit hook
   (`pip install pre-commit && pre-commit install`).
 - **No inbound HTTP**, so CORS, cookies and Bearer auth do not apply. If an endpoint is ever added,
-  [SCOPE.md](SCOPE.md), section 5, lists the pattern to copy for each.
+  [ADR 0009](docs/adr/0009-sem-porta-de-entrada-e-watchdog-no-lugar-de-health.md) lists the pattern to copy for each.
 
 ## Commands
 

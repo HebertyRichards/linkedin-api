@@ -1,7 +1,7 @@
 """LinkedIn's public (logged-out) job search, the endpoint behind linkedin.com/jobs for visitors.
 
 It is not an official API: LinkedIn's terms forbid automated access, and the markup can change without
-notice. Requests carry no login and no cookies on purpose. See SCOPE.md, section 1.2.
+notice. Requests carry no login and no cookies on purpose. See docs/adr/0002-busca-publica-do-linkedin-sem-login.md.
 """
 
 import asyncio

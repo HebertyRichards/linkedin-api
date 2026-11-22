@@ -6,7 +6,9 @@ default behavior.** Goal: small changes in the style of the existing code, witho
 A single-process asyncio **worker**: it polls the public job searches of LinkedIn, Gupy, Remotar, Himalayas and
 Workable (all at once, every cycle), scores the new jobs
 (any kind of application; it never applies) and alerts by email (Resend), WhatsApp (Evolution API) or Telegram
-(Bot API). No HTTP server and no database. The decisions and their sources are in [SCOPE.md](SCOPE.md).
+(Bot API). No HTTP server and no database. What is in and out of scope: [SCOPE.md](SCOPE.md). Business rules,
+each with its reason and the file that enforces it: [CONTEXT.md](CONTEXT.md). Hard-to-reverse decisions and
+their trade-offs: [docs/adr/](docs/adr/).
 
 ## Non-negotiable principles
 
@@ -65,6 +67,13 @@ tests/
   `SOURCE_LABELS` and `_ID_SHAPES` (`schemas/job.py`). A search that already brings the description (no OR/NOT)
   subclasses `TermSearchSource` (`sources/base.py`) and writes only `_fetch_term` and `_read`.
 - **New channel:** a class with the `Notifier` shape, wired in `main.py`. Nothing else changes.
+
+## Docs
+
+- A change to a business rule updates `CONTEXT.md` in the same change; a change of scope updates `SCOPE.md`.
+- Read `docs/adr/` before changing something a record covers. A new hard-to-reverse decision with real
+  alternatives gets a new ADR; an accepted one is never edited, only superseded.
+- No dates, no change history and no names of people in these files: the repo is public and Git keeps the history.
 
 ## Mandatory validation
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash): barra o que o autor proibiu de forma permanente.
+"""PreToolUse(Bash): barra o que o projeto proibe de forma permanente.
 
-Duas familias, as duas por pedido explicito e repetido do autor:
+Duas familias, as duas regras fixas do projeto:
 
 1. `.env` — nunca ler, abrir, imprimir ou grepar. `.env.example` e liberado (e
    justamente a referencia publica). O `permissions.deny` ja cobre a ferramenta
    Read; isto fecha o caminho por shell, que e por onde escaparia.
-2. git que ESCREVE — commit, push, branch, worktree. O autor commita e publica
-   por conta propria; agente nenhum faz isso por ele. Leitura (status, log,
+2. git que ESCREVE — commit, push, branch, worktree. Quem mantem o projeto
+   commita e publica por conta propria; agente nenhum faz isso. Leitura (status, log,
    diff, show) continua liberada, que e como o agente se orienta.
 
 O `permissions.deny` casa por prefixo e nao enxerga `git -C <path> commit` nem
@@ -32,7 +32,7 @@ GIT_WRITE = re.compile(
     re.VERBOSE,
 )
 # `checkout`/`switch` so incomodam quando CRIAM branch; trocar de branch existente
-# nao e o que o autor proibiu.
+# nao e o que o projeto proibe.
 BRANCH_CREATING = re.compile(r"\b(?:checkout|switch)\b.*\s-(?:b|c|B|C)\b")
 
 # `git branch` sozinho ou com flag de leitura so LISTA — e o comando que o agente
@@ -54,9 +54,9 @@ def verdict(command: str) -> str | None:
     if ENV.search(command):
         return (
             "BLOQUEADO: o comando toca um arquivo `.env`.\n"
-            "O autor foi explicito e repetido: nunca ler, abrir nem analisar o "
+            "Regra fixa do projeto: nunca ler, abrir nem analisar o "
             "`.env`. Use `.env.example` para saber quais variaveis existem, e "
-            "pergunte ao autor o valor de que precisar."
+            "pergunte ao usuario o valor de que precisar."
         )
 
     match = GIT_WRITE.search(command)
@@ -71,8 +71,8 @@ def verdict(command: str) -> str | None:
 
     return (
         f"BLOQUEADO: `git {sub}` escreve no historico ou cria branch.\n"
-        "O autor commita, publica e ramifica por conta propria — agente nenhum "
-        "faz isso por ele. Deixe as mudancas na arvore de trabalho e diga o que "
+        "Quem mantem o projeto commita, publica e ramifica por conta propria — "
+        "agente nenhum faz isso. Deixe as mudancas na arvore de trabalho e diga o que "
         "mudou; leitura (`status`, `diff`, `log`, `show`) continua liberada."
     )
 

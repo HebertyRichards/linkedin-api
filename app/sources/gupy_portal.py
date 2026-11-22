@@ -8,6 +8,7 @@ no cookies on purpose. Automated reading carries the same kind of terms risk as 
 import html
 import json
 import re
+import unicodedata
 from datetime import datetime
 from urllib.parse import quote, urlsplit
 
@@ -26,6 +27,13 @@ _JOB_LIST_PATH = ("props", "pageProps", "initialJobList", "data")
 _CAREER_HOST = re.compile(r"([a-z0-9-]+)\.gupy\.io")
 _WORKPLACES = {"remote": "Remoto", "hybrid": "Híbrido", "on-site": "Presencial"}
 _EMPLOYMENT = {"vacancy_type_effective": "Efetivo (CLT)", "vacancy_legal_entity": "Pessoa jurídica (PJ)"}
+# The search has no country field. A job in Brazil comes with its state; a job abroad (Lisbon, Coimbra) with its
+# city and an empty state. So a filled state means Brazil, which JOB_LOCATION may name either way.
+_BRAZIL = {"brazil", "brasil"}
+
+
+def _plain(text: str) -> str:
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().strip().lower()
 
 
 class _Item(BaseModel):
@@ -64,6 +72,16 @@ class _Item(BaseModel):
             site=host.group(1),
         )
 
+    def in_location(self, location: str) -> bool:
+        """JOB_LOCATION ("Brazil", "São Paulo", "Curitiba, Brazil": its first part) names the job's city, its state
+        or its country, compared without accents or case. A job without a city or state (most remote ones) gives
+        no place: it is kept, and the score reads its text."""
+        if not (self.city or self.state):
+            return True
+        state = _plain(self.state or "")
+        country = _BRAZIL if state else set()
+        return _plain(location.split(",")[0]) in {_plain(self.city or ""), state, *country}
+
     @property
     def described(self) -> bool:
         return bool((self.description or "").strip())
@@ -99,8 +117,9 @@ def parse_job_list(page: str) -> list[object]:
 
 
 class GupyPortalSource(TermSearchSource):
-    # `location` is not used: Gupy lists jobs in Brazil only. Only page 1 (the newest 12) is read: results come
-    # newest first and the cycle asks for the last hour, so a term with more than 12 new jobs is not expected.
+    # Only the jobs in JOB_LOCATION are kept (`in_location`): Gupy also lists jobs abroad. Only page 1
+    # (the newest 12) is read: results come newest first and the cycle asks for the last hour, so a term with
+    # more than 12 new jobs is not expected.
     name: Source = "gupy"
 
     async def _fetch_term(self, term: str, window_seconds: int | None) -> list[object]:
@@ -111,6 +130,8 @@ class GupyPortalSource(TermSearchSource):
             self._breaker.record_failure()
             raise
 
-    def _read(self, raw: object, now: datetime) -> Listed:
+    def _read(self, raw: object, now: datetime, location: str) -> Listed:
         item = _Item.model_validate(raw)
-        return Listed(item.job(), item.published_date, item.described, lambda: item.details(now))
+        return Listed(
+            item.job(), item.published_date, item.described, lambda: item.details(now), item.in_location(location)
+        )

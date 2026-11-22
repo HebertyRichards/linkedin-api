@@ -102,8 +102,9 @@ class TermSearchSource(ABC):
         """The raw jobs of one term (use `_get`). Raises SourceUnavailableError."""
 
     @abstractmethod
-    def _read(self, raw: object, now: datetime) -> Listed:
-        """Raises ValueError (ValidationError is one) when the job is not recognized."""
+    def _read(self, raw: object, now: datetime, location: str) -> Listed:
+        """Raises ValueError (ValidationError is one) when the job is not recognized. `location` is JOB_LOCATION,
+        for a source that filters the answer by it (`Listed.wanted`)."""
 
     async def fetch_recent(self, keywords: str, location: str, *, window_seconds: int | None) -> list[Job]:
         if not self._breaker.allow():
@@ -118,7 +119,7 @@ class TermSearchSource(ABC):
             recognized = described = 0
             for raw in raw_jobs:
                 try:
-                    listed = self._read(raw, now)
+                    listed = self._read(raw, now, location)
                 except ValueError:
                     logger.debug("Skipped a %s job that failed validation (layout changed?)", self.name)
                     continue

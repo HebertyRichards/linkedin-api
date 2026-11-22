@@ -111,6 +111,30 @@ async def test_window_keeps_only_jobs_published_inside_it() -> None:
     assert [j.id for j in any_date] == ["1", "2"]
 
 
+@pytest.mark.parametrize(
+    ("location", "kept"),
+    [
+        ("Brazil", ["1", "4", "5"]),
+        ("Brasil", ["1", "4", "5"]),
+        ("São Paulo", ["1", "4"]),  # the state of job 1 (and its city)
+        ("goiania, Brazil", ["4", "5"]),  # the first part, without accents or case
+        ("Lisbon", ["2", "4"]),
+    ],
+)
+async def test_only_the_jobs_in_job_location_are_kept(location: str, kept: list[str]) -> None:
+    body = page(
+        item(1),
+        item(2, city="Lisbon", state=""),  # abroad: a city with no state, as Gupy lists it
+        item(3, city="Porto", state=""),
+        item(4, city="", state="", workplaceType="remote"),  # no place given: kept, the score reads the text
+        item(5, city="Goiânia", state="GOIÁS"),
+    )
+    async with serving(body) as client:
+        jobs = await source(client).fetch_recent("python", location, window_seconds=None)
+
+    assert [j.id for j in jobs] == kept
+
+
 async def test_a_job_found_by_two_terms_comes_once() -> None:
     async with serving(page(item(1), item(2))) as client:
         jobs = await source(client).fetch_recent("python OR django", "Brazil", window_seconds=3600)
