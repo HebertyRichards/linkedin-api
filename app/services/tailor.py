@@ -78,7 +78,7 @@ class TailorChoice(BaseModel):
 class TailoredFile:
     resume: TailoredResume  # what the file holds (for Gupy: only what its ranking reads)
     attachment: Attachment  # the PDF; for a Gupy job, the text to type into its form fields instead
-    score: int | None = None  # the job's score against this resume; None: not scored (LLM down)
+    assessment: Assessment | None = None  # the job scored against this resume; None: not scored (LLM down)
 
 
 # The score of a job against another resume (JobAssessor.score_resume).
@@ -261,7 +261,7 @@ class ResumeTailor:
             return None
         # The job's score is against the base resume; this one tells what the file sent is worth for it.
         scored = await self._score(job, details, _as_resume(self._resume, tailored)) if self._score else None
-        result = TailoredFile(resume=tailored, attachment=attachment, score=scored.score if scored else None)
+        result = TailoredFile(resume=tailored, attachment=attachment, assessment=scored)
         if len(self._cache) >= _CACHE_SIZE:
             del self._cache[next(iter(self._cache))]
         self._cache[job.key] = result

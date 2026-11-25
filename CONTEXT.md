@@ -65,9 +65,11 @@ Cada regra diz o que vale, por quê e onde o código aplica. Mudou uma regra: es
 ### BR-006: Duas notas na mensagem
 
 - **Rule:** depois do ajuste, o mesmo modelo da nota dá uma segunda nota ao que vai no anexo, e a mensagem mostra as
-  duas. Só a nota base decide o envio. Com a IA fora nessa hora, a vaga sai sem a segunda nota.
-- **Why:** quem recebe precisa saber quanto vale o arquivo enviado; como o ajuste só escolhe e reordena o que o
-  currículo já tem, uma diferença grande entre as duas notas é ruído da IA, não uma melhora.
+  duas: a segunda com a diferença para a base, o motivo e o que ainda falta. Só a nota base decide o envio. Com a IA
+  fora nessa hora, a vaga sai sem a segunda nota.
+- **Why:** quem recebe precisa saber quanto vale o arquivo enviado e o que melhorar. O ajuste só escolhe e reordena o
+  que o currículo já tem: o que ainda falta depois dele falta no próprio currículo, e uma diferença grande entre as
+  duas notas é ruído da IA, não uma melhora.
 - **Enforced in:** `JobAssessor.score_resume` em `app/services/assessor.py`; `ResumeTailor.tailor` em
   `app/services/tailor.py`; `_resume_lines` em `app/services/messages.py`.
 - **Exceptions:** none

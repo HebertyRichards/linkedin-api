@@ -266,13 +266,16 @@ async def test_the_tailored_resume_gets_its_own_score_shown_next_to_the_base_one
         result = await tailor.tailor(job(1), DETAILS)
         again = await tailor.tailor(job(1), DETAILS)
 
-    assert result is not None and result.score == 68
+    assert result is not None and result.assessment == assessment(68)
     assert again is result and len(seen) == 1  # a retry costs no second score
     # Scored on what the PDF holds: the picked projects and the tailored skills, the chosen one first.
     assert [p.id for p in seen[0].projetos] == ["clima", "horta"]
     assert seen[0].habilidades["ajustadas"][0] == "Kafka" and seen[0].habilidades_sob_demanda == []
     message = job_message([job(1)], {job(1).key: assessment(55)}, {job(1).key: result})
-    assert "Nota 55/100" in message.text and "Nota com o currículo ajustado: 68/100" in message.text
+    assert "Nota 55/100" in message.text
+    # The second score says why and what is still missing: the tailoring could not cover it, the resume lacks it.
+    assert "Nota com o currículo ajustado: 68/100 (+13): Stack parecida." in message.text
+    assert "Ainda falta: Kubernetes" in message.text
 
 
 async def test_a_tailored_resume_left_unscored_still_goes_without_the_second_score(
@@ -289,5 +292,5 @@ async def test_a_tailored_resume_left_unscored_still_goes_without_the_second_sco
         chat = build_chat(client, model="openai/gpt-oss-120b", retry_base_delay=0)
         result = await ResumeTailor(chat, resume, contact, today=lambda: TODAY, score=down).tailor(job(1), DETAILS)
 
-    assert result is not None and result.score is None
+    assert result is not None and result.assessment is None
     assert "ajustado:" not in job_message([job(1)], tailored={job(1).key: result}).text
