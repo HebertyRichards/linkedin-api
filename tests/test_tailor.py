@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from datetime import date
 
 import httpx
@@ -276,6 +277,8 @@ async def test_the_tailored_resume_gets_its_own_score_shown_next_to_the_base_one
     # The second score says why and what is still missing: the tailoring could not cover it, the resume lacks it.
     assert "Nota com o currículo ajustado: 68/100 (+13): Stack parecida." in message.text
     assert "Ainda falta: Kubernetes" in message.text
+    zero = replace(result, assessment=assessment(0))
+    assert "ajustado:" not in job_message([job(1)], {job(1).key: assessment(55)}, {job(1).key: zero}).text
 
 
 async def test_a_tailored_resume_left_unscored_still_goes_without_the_second_score(

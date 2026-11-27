@@ -44,7 +44,7 @@ def _resume_lines(tailored: TailoredFile | None, assessment: Assessment | None =
     gupy = tailored.attachment.media_type == "text/plain"
     kind, held = ("Texto para colar na Gupy", "texto") if gupy else ("Currículo ajustado", "currículo")
     score: list[str] = []
-    if (after := tailored.assessment) is not None:
+    if (after := tailored.assessment) is not None and after.score > 0:
         # The gaps left after tailoring are what the resume itself lacks: what to study or add to it.
         diff = f" ({after.score - assessment.score:+d})" if assessment else ""
         score.append(f"Nota com o {held} ajustado: {after.score}/100{diff}: {after.reasons}")
